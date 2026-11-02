@@ -1,4 +1,4 @@
-import type { OverlayEdge, OverlayStatus } from '@/shared/types'
+import type { OverlayEdge, OverlayHitRect, OverlayStatus } from '@/shared/types'
 
 /**
  * 纯函数模块：封装 overlay HUD 胶囊的拖拽 / 点按切换 / 按住说话状态机。
@@ -473,4 +473,41 @@ export const DOCK_TRANSLATE: Record<OverlayEdge, string> = {
   right: '-translate-x-4',
   top: 'translate-y-4',
   bottom: '-translate-y-4',
+}
+
+/**
+ * hover 穿透「交互锁」（grab）判定：true = 有交互在途，Rust 侧必须锁定窗口
+ * 不穿透（`set_overlay_hover_grab`），即使光标已离开胶囊可见区。
+ *
+ * 锁定范围 = 手势在途（pending / holding / dragging）**或** latch 持续录音
+ * **或** 状态机仍处录音：hover 穿透的翻转是异步的（钩子 → worker → Tauri），
+ * 在这些窗口期放行穿透会把按下 / 拖拽 / 「再点一下停止」从中间撕开（0.5.1 的
+ * 「胶囊边缘按下无反应」以新形态回归）。状态机回 idle、无 latch、无录音即放开。
+ * 纯函数，供 HUD 在每次状态机输出与 overlay-update 两处共用。
+ */
+export function isHoverGrabActive(input: {
+  phase: DragPhase
+  latched: boolean
+  status: OverlayStatus
+}): boolean {
+  return input.phase !== 'idle' || input.latched || input.status === 'recording'
+}
+
+/**
+ * 把 DOM 测量值（`getBoundingClientRect()`）规范化为 `set_overlay_hit_rect`
+ * 的载荷。必须显式复制成普通对象：DOMRect 的 x/y/width/height 是原型上的
+ * getter，直接丢给 invoke 会序列化成 `{}`。脏值（缺失 / NaN / 无穷 / 非正面积）
+ * 一律返回 `null`——但注意 `null` 在命令契约里是「胶囊消失」，所以只有「确实
+ * 没有测量目标」才应该传 `null`，测量值本身异常时宁可保留上一次的热区（调用方
+ * 直接跳过推送），绝不让一次抖动把可见胶囊变成点不到的死区。
+ */
+export function toOverlayHitRect(
+  rect: { x: number; y: number; width: number; height: number } | null | undefined,
+): OverlayHitRect | null {
+  if (!rect) return null
+  const { x, y, width, height } = rect
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return null
+  }
+  return { x, y, width, height }
 }

@@ -124,6 +124,18 @@ export interface HotkeyConfig {
  */
 export type OverlayEdge = 'left' | 'right' | 'top' | 'bottom'
 
+/**
+ * 胶囊可见矩形（hover 穿透热区，`set_overlay_hit_rect` 契约）：**逻辑 px**、
+ * 相对所在窗口客户区原点（即 `getBoundingClientRect()` 的坐标系）。
+ * `null`（命令参数）= 胶囊已消失（卸载 / 隐藏），窗口整只穿透。
+ */
+export interface OverlayHitRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface AppPreferences {
   language: LanguageSetting
   autoLaunch?: boolean
@@ -171,11 +183,6 @@ export interface LinuxIntegrationStatus {
   backupPath: string
   conflicts: string[]
   error?: string
-}
-
-export interface ConfigSecretRequest {
-  scope: 'llm-refine' | 'asr'
-  provider: LLMProvider | 'mimo'
 }
 
 export interface HistoryItem {

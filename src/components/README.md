@@ -31,7 +31,7 @@ React 组件目录，包含应用级组件与 `ui/` 组件库。
 
 ### `HUD.tsx`
 
-overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光标所在屏幕的工作区底部居中、任务栏上方约 48px 处；位置可被用户拖拽改变并由 Rust 持久化）。**0.5.6 解耦**：录音 / 处理 / 成功 / 错误的会话态视觉与取消按钮已拆出到独立的 `SessionHUD.tsx`（下方居中的 `session` 窗口）——本组件**只渲染待机（idle）胶囊**，但仍完整订阅 `overlay-update` / `audio-level`：`statusRef` 供状态机裁决点按语义（latch 停止），音频电平供 latched 静音自动停止判定，会话离开录音态时复位 latch 标记。hold 手势在途时待机胶囊**保持原形态、原位不动**（大胶囊在 session 窗下方居中，两窗同显）。**窗口几何恒定**：overlay 窗口常驻 `tauri.conf.json` 的 280×64，**不随状态缩放**——0.5.3 起彻底移除 renderer 的 `setOverlaySize` / 内容测量 / `scheduleOverlayResize` 路径（状态机也不再发出任何 resize 命令），因为「会话 / 手势进行中改变窗口尺寸」会在 WebView2 上打断指针手势（详见下文根因）。待机胶囊尺寸（≈104×36，贴边紧凑 32×32）居中于窗口、不被裁切。**按下热区挂在整窗容器上**（外层 `fixed inset-0` 的容器带 `pointer-events-auto` 并承载 `pointerdown` / `dblclick` / `contextmenu`），待机胶囊 `<button>` 只作视觉主体。**手势后续（move / up / cancel / blur）一律由 window 级监听器驱动状态机**，容器不再直接承载 `pointerup` / `pointercancel`。鼠标事件语义：整窗可点击（`set_ignore_mouse_events(false)`，不做穿透）——Tauri `set_ignore_cursor_events` 只有 bool、无 Electron 式 forward 转发，hover 穿透会让 `mouseenter` 不再可达，故不做 hover 穿透切换。胶囊为常驻待机启动器：启动后一直显示；状态机 idle →（session 窗显示会话态）→ 回 idle（会话结束本窗始终待机形态，仅托盘「显示悬浮胶囊」可隐藏本窗）。待机胶囊**不设 `title`**（避免悬停弹出原生 tooltip），仅保留 `aria-label`。
+overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光标所在屏幕的工作区底部居中、任务栏上方约 48px 处；位置可被用户拖拽改变并由 Rust 持久化）。**0.5.6 解耦**：录音 / 处理 / 成功 / 错误的会话态视觉与取消按钮已拆出到独立的 `SessionHUD.tsx`（下方居中的 `session` 窗口）——本组件**只渲染待机（idle）胶囊**，但仍完整订阅 `overlay-update` / `audio-level`：`statusRef` 供状态机裁决点按语义（latch 停止），音频电平供 latched 静音自动停止判定，会话离开录音态时复位 latch 标记。hold 手势在途时待机胶囊**保持原形态、原位不动**（大胶囊在 session 窗下方居中，两窗同显）。**窗口几何恒定**：overlay 窗口常驻 `tauri.conf.json` 的 280×64，**不随状态缩放**——0.5.3 起彻底移除 renderer 的 `setOverlaySize` / 内容测量 / `scheduleOverlayResize` 路径（状态机也不再发出任何 resize 命令），因为「会话 / 手势进行中改变窗口尺寸」会在 WebView2 上打断指针手势（详见下文根因）。待机胶囊尺寸（≈104×36，贴边紧凑 32×32）居中于窗口、不被裁切。**按下热区挂在胶囊热区盒上**（外层 `fixed inset-0` 容器为 `pointer-events-none`，交互挂在包住胶囊布局盒的**矩形**热区盒 `hitBoxRef`（= 胶囊外接矩形 + 3px padding）上，承载 `pointerdown` / `dblclick`，contextmenu 由 window 级监听统一拦截）——矩形无圆角，胶囊圆角四角的按下仍有效（0.5.1 防回归意图保留）；盒外的窗口空白**不再是热区**，点击 / 滚轮穿透到下层应用。待机胶囊 `<button>` 只作视觉主体。**手势后续（move / up / cancel / blur）一律由 window 级监听器驱动状态机**，容器不再直接承载 `pointerup` / `pointercancel`。鼠标事件语义（0.5.15 hover 穿透，取代旧「整窗恒 `set_ignore_mouse_events(false)`」）：胶囊可见矩形（`getBoundingClientRect`，逻辑 px）经 `setOverlayHitRect` 推给 Rust，`mouse.rs` 的 `WH_MOUSE_LL` 全局钩子做悬停检测（**穿透状态下钩子照样看得见鼠标移动**，旧「穿透后 `mouseenter` 不可达、胶囊会永久点不到」的理由不再成立），矩形外 `set_ignore_cursor_events(true)` 穿透、进入矩形 / 手势交互锁（`setOverlayHoverGrab`，pending / holding / dragging / latched / 录音中锁定不穿透直到状态机回 idle）翻回可交互；ignore 标志由该机制**唯一拥有**，组件不再直接写。贴边贴齐位移（`DOCK_TRANSLATE`）挂在热区盒（而非按钮）上，保证热区测量矩形 == 视觉胶囊外接矩形。胶囊为常驻待机启动器：启动后一直显示；状态机 idle →（session 窗显示会话态）→ 回 idle（会话结束本窗始终待机形态，仅托盘「显示悬浮胶囊」可隐藏本窗）。待机胶囊**不设 `title`**（避免悬停弹出原生 tooltip），仅保留 `aria-label`。
 
 **待机态（idle）交互（0.5.3 重设计，用户拍板）**：小尺寸低调胶囊（36px 高，小圆麦克风 + 「按住说话」；**贴边吸附时收缩为仅图标的 32×32 紧凑圆形（贴齐屏幕边），见下方「贴边紧凑形态」**）。**指针按下不再立即开录**——`pointerdown` 只开始一次「手势」，等手势歧义消除后才决定动作：
 
@@ -66,6 +66,8 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 点击不抢焦点依赖 Rust 侧 `WS_EX_NOACTIVATE` 硬化（见 `src-tauri/README.md`）。
 
+**hover 穿透（0.5.15，与 HUD 同机制）**：本窗同为 280×64 透明窗，根容器 `pointer-events-none`，胶囊（268×52 居中）可见矩形经 `setOverlayHitRect` 推给 Rust——矩形外的点击 / 滚轮穿透到下层应用；`idle` 渲染 `null` 时推 `null`（恒穿透）。录音 / 处理中 `setOverlayHoverGrab(true)` 锁定交互（取消按钮必须 100% 可点，不赌 hover 翻转时序），成功 / 错误展示无按钮、交给 hover 判定。
+
 ### `SessionNotifications.tsx`
 
 主窗口录音反馈监听组件（渲染 `null`）：订阅主进程 `error` / `transcription` / `session-status` 事件并用 sonner toast 呈现——错误与转写结果必报，`recording`/`processing` 等瞬态状态跳过以免刷屏；仅在 main 窗口挂载（overlay/background 窗口不响应）。
@@ -96,7 +98,7 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 ### `ChangelogDialog.tsx`
 
-更新日志对话框：构建期嵌入仓库根 `CHANGELOG.md?raw`，按版本分节展示，最新版本在顶部。
+更新日志对话框：构建期嵌入仓库根 `CHANGELOG.md?raw`，按版本分节展示，仅渲染 `>= 0.5.0` 的版本；正文使用 `renderMarkdown` 渲染为 HTML，配套 `.vk-changelog-md` 作用域样式覆盖标题、列表、行内 code、代码块、链接、分隔线等；外链优先经 `window.electronAPI.openExternal` 打开，无桥方法时降级为 `_blank` 新标签页。
 
 ### `LogViewerDialog.tsx`
 
@@ -104,7 +106,7 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 ### `StatsOverview.tsx`
 
-主页统计磁贴行（累计字数 / 累计时长 / 活跃天数 / 峰值日），接收 `HomePage` 合并后的 `DictationStats`（累计字段来自 Rust 独立统计存储 `get_stats`，历史删除不清零）。
+主页累计数据条（识别字符总数 / 录音总时长 / 活跃天数 / 峰值日）：单面板四格、`gap-px` 发丝线分隔，与首页仪表台风格一致。接收 `HomePage` 合并后的 `DictationStats`（累计字段来自 Rust 独立统计存储 `get_stats`，历史删除不清零）。
 
 ### `InteractiveCharts.tsx`
 

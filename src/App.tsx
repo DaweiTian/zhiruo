@@ -23,15 +23,13 @@ function App() {
   const [windowKind] = useState<WindowKind>(() => readWindowKind())
   const [currentRoute, setCurrentRoute] = useState(() => {
     const hash = window.location.hash.slice(1) || ''
-    return hash && hash !== '/' ? hash : '/settings'
+    return hash && hash !== '/' ? hash : '/home'
   })
 
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.slice(1) || ''
-      if (hash && hash !== '/') {
-        setCurrentRoute(hash)
-      }
+      setCurrentRoute(hash && hash !== '/' ? hash : '/home')
     }
     window.addEventListener('hashchange', handleHashChange)
     return () => window.removeEventListener('hashchange', handleHashChange)
@@ -54,18 +52,19 @@ function App() {
 
   const getPage = () => {
     switch (currentRoute) {
+      case '/settings':
+        return <SettingsPage />
       case '/history':
         return <HistoryPage />
-      case '/home':
-      case '/settings':
       default:
-        return currentRoute === '/home' ? <HomePage /> : <SettingsPage />
+        return <HomePage />
     }
   }
 
-  // Main window: settings is the operational surface; other routes via hash.
+  // Main window: default route is the main interface (home); settings /
+  // history are reached via hash (tray menu, hotkey, sidebar).
   const route =
-    currentRoute === '/home' ? '/home' : currentRoute === '/history' ? '/history' : '/settings'
+    currentRoute === '/settings' ? '/settings' : currentRoute === '/history' ? '/history' : '/home'
   return <MainLayout currentRoute={route}>{getPage()}</MainLayout>
 }
 

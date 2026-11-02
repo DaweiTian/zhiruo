@@ -30,7 +30,9 @@ pub fn set_overlay_menu_checked(checked: bool) {
 /// Toggle launch-at-login from the tray menu and refresh the checkmark from
 /// the plugin's real state so the menu never drifts from the OS setting.
 /// Pure Rust side: no renderer round-trip and therefore no capability
-/// permission required.
+/// permission required. `enable()` composes the OS entry from the app path plus
+/// the plugin's configured args, so every entry written from here already
+/// carries the `--autostart` marker (`lib.rs`) and autostarts stay silent.
 fn toggle_autostart<R: Runtime>(app: &AppHandle<R>, item: &CheckMenuItem<R>) {
     let autolaunch = app.autolaunch();
     let result = match autolaunch.is_enabled() {
@@ -51,6 +53,39 @@ fn toggle_autostart<R: Runtime>(app: &AppHandle<R>, item: &CheckMenuItem<R>) {
             let _ = item.set_checked(enabled);
         }
         Err(e) => log::error!("autostart: failed to update launch-at-login: {e}"),
+    }
+}
+
+/// One-time self-heal for launch-at-login entries created **before** the
+/// `--autostart` marker argument existed (`lib.rs` passes it to
+/// `tauri_plugin_autostart::init`; `auto-launch`'s `enable()` composes the whole
+/// `"{exe}" {args}` registry value, so re-enabling an already-enabled entry
+/// rewrites the value in place - same hive, same value name, same state).
+///
+/// Called once from `setup`. Users updating from a pre-marker build have
+/// autostart enabled but their entry carries no argument, so **the first
+/// autostart after the update may still pop the main window once** (that login
+/// reads the old entry - the app can only heal it when it next runs); after
+/// this self-heal every following autostart is silent, permanently (every later
+/// `enable()`, including the tray toggle, writes the marker from the plugin's
+/// args).
+///
+/// `is_enabled()` only reports whether an entry exists, not what it contains,
+/// so the rewrite runs unconditionally whenever autostart is enabled - writing
+/// an already-correct value is idempotent. When autostart is disabled there is
+/// nothing to heal, and we must never create an entry the user never asked for.
+pub fn heal_autostart_entry<R: Runtime>(app: &AppHandle<R>) {
+    let autolaunch = app.autolaunch();
+    match autolaunch.is_enabled() {
+        Ok(true) => {
+            if let Err(e) = autolaunch.enable() {
+                log::warn!(
+                    "autostart: failed to rewrite launch-at-login entry with the --autostart marker: {e}"
+                );
+            }
+        }
+        Ok(false) => {} // nothing registered: nothing to heal
+        Err(e) => log::warn!("autostart: failed to read current state for the entry self-heal: {e}"),
     }
 }
 
@@ -131,9 +166,13 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
-            "show" | "settings" => {
-                // Rebuilds the main window if the delayed destroy reclaimed it.
-                crate::windowing::open_main_window(app);
+            // Left-click and "Open Zhiruo" land on the main interface;
+            // only the explicit "Settings" item opens the settings page.
+            "show" => {
+                crate::windowing::open_main_window(app, "/home");
+            }
+            "settings" => {
+                crate::windowing::open_main_window(app, "/settings");
             }
             "autostart" => toggle_autostart(app, &autostart_item),
             "overlay-toggle" => {
@@ -170,7 +209,7 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
             {
                 let app = tray.app_handle();
                 // Rebuilds the main window if the delayed destroy reclaimed it.
-                crate::windowing::open_main_window(app);
+                crate::windowing::open_main_window(app, "/home");
             }
         })
         .build(app)

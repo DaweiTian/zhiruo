@@ -6,7 +6,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
   AppConfig,
-  ConfigSecretRequest,
   HistoryItem,
   LanguageSnapshot,
   LinuxIntegrationStatus,
@@ -14,6 +13,7 @@ import type {
   LogEntryPayload,
   LogTailOptions,
   OverlayEdge,
+  OverlayHitRect,
   OverlayState,
   RefineConnectionResult,
   RecordingStartPayload as SharedRecordingStartPayload,
@@ -88,8 +88,6 @@ export const tauriApi = {
   // config
   getConfig: () => invoke<AppConfig>('get_config'),
   setConfig: (config: Partial<AppConfig>) => invoke<SetConfigResult>('set_config', { config }),
-  getConfigSecret: (request: ConfigSecretRequest) =>
-    invoke<string>('get_config_secret', { request }),
   testRefineConnection: (config: LLMRefineConfig) =>
     invoke<RefineConnectionResult>('test_refine_connection', { config }),
   connectTokenDance: () => invoke<{ ok: boolean; message?: string }>('connect_token_dance'),
@@ -196,6 +194,17 @@ export const tauriApi = {
     // 「胶囊贴边」吸附；缺省（或 malformed）回退按窗口外框吸附的旧行为。
     capsule?: { width: number; height: number },
   ) => invoke<OverlayEdge | null>('set_overlay_position', { x, y, capsule: capsule ?? null }),
+
+  // hover 穿透热区：把「胶囊可见矩形」（逻辑 px、相对窗口客户区原点，
+  // getBoundingClientRect 口径）推给 Rust 的 mouse.rs 悬停检测；`null` = 胶囊已
+  // 消失（卸载 / 隐藏）→ 窗口整只穿透。仅 overlay / session 两窗可调（Rust 按调用
+  // 窗口 label 归属，其余一律拒绝）。矩形之外的点击 / 滚轮都穿透到下层应用。
+  setOverlayHitRect: (rect: OverlayHitRect | null) =>
+    invoke<void>('set_overlay_hit_rect', { rect }),
+
+  // hover 穿透交互锁：手势在途（pending / holding / dragging / latched / 录音中）
+  // 期间置 true，锁定窗口不穿透（hover 翻转不得撕裂手势），状态机回 idle 才放开。
+  setOverlayHoverGrab: (grabbed: boolean) => invoke<void>('set_overlay_hover_grab', { grabbed }),
 
   // updates
   checkForUpdates: () => invoke<UpdateInfo>('check_for_updates'),

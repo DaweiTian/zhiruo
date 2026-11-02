@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AudioLines, Check, Globe, Mic, Sparkles, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { OverlayProcessingStage, OverlayState } from '@/shared/types'
+import { toOverlayHitRect } from '../lib/overlayDrag'
 import { cn } from '../lib/utils'
 import { Waveform } from './Waveform'
 
@@ -129,6 +130,8 @@ export function SessionHUD() {
   const { t } = useTranslation()
   const [overlayState, setOverlayState] = useState<OverlayState>({ status: 'idle' })
   const [audioLevel, setAudioLevel] = useState(0)
+  /** 会话胶囊 ref：hover 穿透热区（`set_overlay_hit_rect`）的测量来源。 */
+  const capsuleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     document.documentElement.classList.add('overlay-html')
@@ -151,6 +154,53 @@ export function SessionHUD() {
       removeOverlayUpdateListener?.()
       removeAudioLevelListener?.()
     }
+  }, [])
+
+  /**
+   * hover 穿透热区（0.5.15，与 HUD 同机制）：本窗也是 280×64 透明窗，四周同样有
+   * 隐形热区。会话胶囊（268×52 居中）可见矩形之外的点击 / 滚轮穿透到下层应用；
+   * `null`（idle 渲染空窗）= 无胶囊 → 恒穿透，与 Rust 的隐藏收口（`hide_session`）
+   * 语义一致。录音 / 处理中**锁定交互**（`set_overlay_hover_grab(true)`）：取消按钮
+   * 必须 100% 可点，不赌 hover 翻转的异步时序；成功 / 错误展示无按钮，交给 hover
+   * 判定。仅按 `overlayState.status` 变化推送（胶囊是固定尺寸，无形态过渡）。
+   */
+  useEffect(() => {
+    const status = overlayState.status
+    if (status === 'idle') {
+      window.electronAPI.setOverlayHitRect(null).catch(() => {})
+      window.electronAPI.setOverlayHoverGrab(false).catch(() => {})
+      return
+    }
+    // 渲染后测量（rAF 等布局落定）；DOMRect 必须经 toOverlayHitRect 复制成普通对象。
+    let cancelled = false
+    requestAnimationFrame(() => {
+      if (cancelled) return
+      const rect = capsuleRef.current
+        ? toOverlayHitRect(capsuleRef.current.getBoundingClientRect())
+        : null
+      if (rect) window.electronAPI.setOverlayHitRect(rect).catch(() => {})
+    })
+    const grabbed = status === 'recording' || status === 'processing'
+    window.electronAPI.setOverlayHoverGrab(grabbed).catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [overlayState.status])
+
+  useEffect(() => {
+    // 卸载 = 胶囊消失：热区清空 → 本窗恒穿透。
+    return () => {
+      window.electronAPI.setOverlayHitRect(null).catch(() => {})
+      window.electronAPI.setOverlayHoverGrab(false).catch(() => {})
+    }
+  }, [])
+
+  useEffect(() => {
+    // 整窗禁用 WebView2 默认上下文菜单（穿透区右键本应直达下层应用；这里兜底的是
+    // 热区与实测矩形亚像素错位时落回本窗的右键）。同 HUD。
+    const prevent = (event: Event) => event.preventDefault()
+    window.addEventListener('contextmenu', prevent)
+    return () => window.removeEventListener('contextmenu', prevent)
   }, [])
 
   /** 取消会话（cancel 按钮）：静默丢弃；Rust 取消后回 idle 并隐藏本窗。 */
@@ -178,9 +228,10 @@ export function SessionHUD() {
   const textClass = 'min-w-0 flex-1 truncate text-[13px] leading-4 text-neutral-100'
 
   return (
-    <div className="pointer-events-auto fixed inset-0 flex items-center justify-center">
+    <div className="pointer-events-none fixed inset-0 flex items-center justify-center">
       <div className="flex shrink-0">
         <div
+          ref={capsuleRef}
           className={cn(
             'pointer-events-auto relative flex h-[52px] w-[268px] items-center gap-2.5 rounded-full',
             'bg-neutral-950/90 px-3 ring-1 ring-white/[0.06]',

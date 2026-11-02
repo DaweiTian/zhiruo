@@ -3,8 +3,6 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  Eye,
-  EyeOff,
   Sparkles,
   SlidersHorizontal,
   Mic,
@@ -53,7 +51,6 @@ import {
 import type {
   AppConfig,
   CloudDialect,
-  ConfigSecretRequest,
   FillerCleanupMode,
   LLMRefineConfig,
   LLMProvider,
@@ -348,8 +345,6 @@ export default function SettingsPage() {
   const [isConfigLoading, setIsConfigLoading] = useState(true)
   const [asrTestStatus, setAsrTestStatus] = useState<TestStatus>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(null)
-  const [visibleSecret, setVisibleSecret] = useState<{ id: string; value?: string } | null>(null)
-  const [revealingSecretId, setRevealingSecretId] = useState<string | null>(null)
   const [logDialogOpen, setLogDialogOpen] = useState(false)
   const [changelogOpen, setChangelogOpen] = useState(false)
   const [testingRefine, setTestingRefine] = useState(false)
@@ -372,7 +367,6 @@ export default function SettingsPage() {
   const isAutoSavingRef = useRef(false)
   const shouldRunAutoSaveAgainRef = useRef(false)
   const flushAutoSaveRef = useRef<() => Promise<void>>(async () => {})
-  const revealRequestIdRef = useRef(0)
   const microphoneLoadRequestIdRef = useRef(0)
   /**
    * Recently validated LLM connections keyed by fingerprint. Switching providers back
@@ -763,10 +757,6 @@ export default function SettingsPage() {
         })
       }
 
-      setVisibleSecret(null)
-      setRevealingSecretId(null)
-      revealRequestIdRef.current += 1
-
       if (invalidMessage) {
         setSaveStatus({ state: 'invalid', message: invalidMessage })
       } else {
@@ -1074,9 +1064,6 @@ export default function SettingsPage() {
 
   const handleLLMProviderChange = (value: string) => {
     const provider = value as LLMProvider
-    setVisibleSecret(null)
-    setRevealingSecretId(null)
-    revealRequestIdRef.current += 1
 
     const prev = latestConfigRef.current
     const nextRefine = normalizeLLMRefineConfig({
@@ -1103,9 +1090,6 @@ export default function SettingsPage() {
 
   const handleOpenAIApiKeyChange = (value: string) => {
     disableRefineDependentFeatures()
-    setVisibleSecret((current) =>
-      current?.id === 'llm-refine:openai' ? { id: current.id } : current,
-    )
     setConfig((prev) => ({
       ...prev,
       llmRefine: normalizeLLMRefineConfig({
@@ -1136,9 +1120,6 @@ export default function SettingsPage() {
 
   const handleDeepSeekApiKeyChange = (value: string) => {
     disableRefineDependentFeatures()
-    setVisibleSecret((current) =>
-      current?.id === 'llm-refine:deepseek' ? { id: current.id } : current,
-    )
     setConfig((prev) => ({
       ...prev,
       llmRefine: normalizeLLMRefineConfig({
@@ -1170,9 +1151,6 @@ export default function SettingsPage() {
 
   const handleOpenRouterApiKeyChange = (value: string) => {
     disableRefineDependentFeatures()
-    setVisibleSecret((current) =>
-      current?.id === 'llm-refine:openrouter' ? { id: current.id } : current,
-    )
     setConfig((prev) => ({
       ...prev,
       llmRefine: normalizeLLMRefineConfig({
@@ -1204,9 +1182,6 @@ export default function SettingsPage() {
 
   const handleTokenDanceApiKeyChange = (value: string) => {
     disableRefineDependentFeatures()
-    setVisibleSecret((current) =>
-      current?.id === 'llm-refine:tokendance' ? { id: current.id } : current,
-    )
     setConfig((prev) => ({
       ...prev,
       llmRefine: normalizeLLMRefineConfig({
@@ -1265,7 +1240,6 @@ export default function SettingsPage() {
         latestConfigRef.current = next
         return next
       })
-      setVisibleSecret(null)
 
       // The stored key changed behind the same masked placeholder, so any cached
       // validation for this connection fingerprint belongs to the previous key.
@@ -1291,11 +1265,6 @@ export default function SettingsPage() {
 
   const handleCustomConfigChange = (key: 'endpoint' | 'model' | 'apiKey', value: string) => {
     disableRefineDependentFeatures()
-    if (key === 'apiKey') {
-      setVisibleSecret((current) =>
-        current?.id === 'llm-refine:custom-compatible' ? { id: current.id } : current,
-      )
-    }
     setConfig((prev) => ({
       ...prev,
       llmRefine: {
@@ -1310,11 +1279,6 @@ export default function SettingsPage() {
 
   const handleMimoConfigChange = (key: 'endpoint' | 'model' | 'apiKey', value: string) => {
     disableRefineDependentFeatures()
-    if (key === 'apiKey') {
-      setVisibleSecret((current) =>
-        current?.id === 'llm-refine:mimo' ? { id: current.id } : current,
-      )
-    }
     setConfig((prev) => ({
       ...prev,
       llmRefine: {
@@ -1327,44 +1291,6 @@ export default function SettingsPage() {
         },
       },
     }))
-  }
-
-  const handleSecretVisibilityToggle = async (
-    request: ConfigSecretRequest,
-    secretId: string,
-    currentValue: string,
-  ) => {
-    if (visibleSecret?.id === secretId) {
-      revealRequestIdRef.current += 1
-      setVisibleSecret(null)
-      return
-    }
-
-    if (currentValue !== STORED_SECRET_PLACEHOLDER) {
-      revealRequestIdRef.current += 1
-      setVisibleSecret({ id: secretId })
-      return
-    }
-
-    const requestId = revealRequestIdRef.current + 1
-    revealRequestIdRef.current = requestId
-    setVisibleSecret(null)
-    setRevealingSecretId(secretId)
-    try {
-      const secret = await window.electronAPI.getConfigSecret(request)
-      if (revealRequestIdRef.current !== requestId) return
-      setVisibleSecret({ id: secretId, value: secret })
-    } catch {
-      window.electronAPI.log({
-        level: 'error',
-        message: 'Failed to reveal saved API key',
-        scope: 'settings',
-      })
-    } finally {
-      if (revealRequestIdRef.current === requestId) {
-        setRevealingSecretId(null)
-      }
-    }
   }
 
   const handleCustomEndpointBlur = () => {
@@ -1452,12 +1378,6 @@ export default function SettingsPage() {
   const normalizedLLMRefineConfig = normalizeLLMRefineConfig(config.llmRefine)
   const activeLLMConnection = resolveLLMConnection(normalizedLLMRefineConfig)
   const currentLLMProvider = normalizedLLMRefineConfig.provider
-  const refineSecretId = `llm-refine:${currentLLMProvider}`
-  const isRefineApiKeyVisible = visibleSecret?.id === refineSecretId
-  const displayedRefineApiKey =
-    isRefineApiKeyVisible && activeLLMConnection.apiKey === STORED_SECRET_PLACEHOLDER
-      ? (visibleSecret.value ?? activeLLMConnection.apiKey)
-      : activeLLMConnection.apiKey
   const isCustomLLMProvider = currentLLMProvider === 'custom-compatible'
   const builtInDeepSeekModels: string[] = [...LLM_PROVIDERS.DEEPSEEK_MODELS]
   const llmProviderOptions = [
@@ -1881,51 +1801,36 @@ export default function SettingsPage() {
                   <Label htmlFor="asrCloudApiKey">
                     {t('settings.cloudApiKeyLabel')} <span className="text-primary">*</span>
                   </Label>
-                  <div className="relative">
-                    <Input
-                      id="asrCloudApiKey"
-                      type={visibleSecret?.id === 'asr:mimo' ? 'text' : 'password'}
-                      value={
-                        visibleSecret?.id === 'asr:mimo'
-                          ? (visibleSecret.value ?? config.asr.cloudApiKey ?? '')
-                          : (config.asr.cloudApiKey ?? '')
+                  {/* 与 LLM 密钥同一脱敏契约：填写阶段明文可核对，保存确认后仅显示掩码。 */}
+                  <Input
+                    id="asrCloudApiKey"
+                    type={
+                      (config.asr.cloudApiKey ?? '') === STORED_SECRET_PLACEHOLDER
+                        ? 'password'
+                        : 'text'
+                    }
+                    value={config.asr.cloudApiKey ?? ''}
+                    onChange={(e) => {
+                      const nextValue = stripStoredSecretPlaceholder(
+                        e.target.value,
+                        config.asr.cloudApiKey ?? '',
+                      )
+                      setConfig((prev) => ({
+                        ...prev,
+                        asr: { ...prev.asr, cloudApiKey: nextValue },
+                      }))
+                    }}
+                    onFocus={(event) => {
+                      if ((config.asr.cloudApiKey ?? '') === STORED_SECRET_PLACEHOLDER) {
+                        event.currentTarget.select()
                       }
-                      onChange={(e) => {
-                        const nextValue = stripStoredSecretPlaceholder(
-                          e.target.value,
-                          config.asr.cloudApiKey ?? '',
-                        )
-                        setVisibleSecret((current) =>
-                          current?.id === 'asr:mimo' ? { id: current.id } : current,
-                        )
-                        setConfig((prev) => ({
-                          ...prev,
-                          asr: { ...prev.asr, cloudApiKey: nextValue },
-                        }))
-                      }}
-                      placeholder={t('settings.cloudApiKeyPlaceholder')}
-                      className="no-drag pr-10 font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void handleSecretVisibilityToggle(
-                          { scope: 'asr', provider: 'mimo' },
-                          'asr:mimo',
-                          config.asr.cloudApiKey ?? '',
-                        )
-                      }
-                      disabled={revealingSecretId === 'asr:mimo'}
-                      aria-label={t('settings.showRefineKey')}
-                      className="no-drag absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
-                    >
-                      {visibleSecret?.id === 'asr:mimo' ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
+                    }}
+                    placeholder={t('settings.cloudApiKeyPlaceholder')}
+                    className="no-drag font-mono"
+                  />
+                  {(config.asr.cloudApiKey ?? '') !== STORED_SECRET_PLACEHOLDER ? (
+                    <p className="text-xs text-muted-foreground">{t('settings.apiKeyMaskHint')}</p>
+                  ) : null}
                   <p className="text-xs text-muted-foreground">{t('settings.cloudApiKeyHelp')}</p>
                 </div>
                 {cloudPreset === 'custom' ? (
@@ -2189,72 +2094,57 @@ export default function SettingsPage() {
               <Label htmlFor="refineApiKey">
                 {t('settings.refineApiKey')} <span className="text-primary">*</span>
               </Label>
-              <div className="relative">
-                <Input
-                  id="refineApiKey"
-                  type={isRefineApiKeyVisible ? 'text' : 'password'}
-                  value={displayedRefineApiKey}
-                  onChange={(e) => {
-                    const nextValue = stripStoredSecretPlaceholder(
-                      e.target.value,
-                      displayedRefineApiKey,
-                    )
-                    if (currentLLMProvider === 'openai') {
-                      handleOpenAIApiKeyChange(nextValue)
-                    } else if (currentLLMProvider === 'deepseek') {
-                      handleDeepSeekApiKeyChange(nextValue)
-                    } else if (currentLLMProvider === 'openrouter') {
-                      handleOpenRouterApiKeyChange(nextValue)
-                    } else if (currentLLMProvider === 'tokendance') {
-                      handleTokenDanceApiKeyChange(nextValue)
-                    } else if (currentLLMProvider === 'mimo') {
-                      handleMimoConfigChange('apiKey', nextValue)
-                    } else {
-                      handleCustomConfigChange('apiKey', nextValue)
-                    }
-                  }}
-                  onFocus={(event) => {
-                    if (activeLLMConnection.apiKey === STORED_SECRET_PLACEHOLDER) {
-                      event.currentTarget.select()
-                    }
-                  }}
-                  placeholder={t(
-                    currentLLMProvider === 'openai'
-                      ? 'settings.openAIApiKeyPlaceholder'
-                      : currentLLMProvider === 'openrouter'
-                        ? 'settings.openRouterApiKeyPlaceholder'
-                        : currentLLMProvider === 'tokendance'
-                          ? 'settings.tokenDanceApiKeyPlaceholder'
-                          : currentLLMProvider === 'deepseek'
-                            ? 'settings.deepSeekApiKeyPlaceholder'
-                            : 'settings.refineApiKeyPlaceholder',
-                  )}
-                  className="no-drag pr-10 font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    void handleSecretVisibilityToggle(
-                      { scope: 'llm-refine', provider: currentLLMProvider },
-                      refineSecretId,
-                      activeLLMConnection.apiKey,
-                    )
+              {/*
+                脱敏契约：填写/粘贴阶段明文可见（可核对）；自动保存完成（确认）后
+                值变为 STORED_SECRET_PLACEHOLDER 并以密码点显示，且不再提供任何
+                查看入口（无眼睛按钮、无 getConfigSecret 调用）。
+              */}
+              <Input
+                id="refineApiKey"
+                type={
+                  activeLLMConnection.apiKey === STORED_SECRET_PLACEHOLDER ? 'password' : 'text'
+                }
+                value={activeLLMConnection.apiKey}
+                onChange={(e) => {
+                  const nextValue = stripStoredSecretPlaceholder(
+                    e.target.value,
+                    activeLLMConnection.apiKey,
+                  )
+                  if (currentLLMProvider === 'openai') {
+                    handleOpenAIApiKeyChange(nextValue)
+                  } else if (currentLLMProvider === 'deepseek') {
+                    handleDeepSeekApiKeyChange(nextValue)
+                  } else if (currentLLMProvider === 'openrouter') {
+                    handleOpenRouterApiKeyChange(nextValue)
+                  } else if (currentLLMProvider === 'tokendance') {
+                    handleTokenDanceApiKeyChange(nextValue)
+                  } else if (currentLLMProvider === 'mimo') {
+                    handleMimoConfigChange('apiKey', nextValue)
+                  } else {
+                    handleCustomConfigChange('apiKey', nextValue)
                   }
-                  disabled={revealingSecretId === refineSecretId}
-                  aria-label={
-                    isRefineApiKeyVisible
-                      ? t('settings.hideRefineKey')
-                      : t('settings.showRefineKey')
+                }}
+                onFocus={(event) => {
+                  if (activeLLMConnection.apiKey === STORED_SECRET_PLACEHOLDER) {
+                    event.currentTarget.select()
                   }
-                  className="no-drag absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
-                >
-                  {isRefineApiKeyVisible ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
+                }}
+                placeholder={t(
+                  currentLLMProvider === 'openai'
+                    ? 'settings.openAIApiKeyPlaceholder'
+                    : currentLLMProvider === 'openrouter'
+                      ? 'settings.openRouterApiKeyPlaceholder'
+                      : currentLLMProvider === 'tokendance'
+                        ? 'settings.tokenDanceApiKeyPlaceholder'
+                        : currentLLMProvider === 'deepseek'
+                          ? 'settings.deepSeekApiKeyPlaceholder'
+                          : 'settings.refineApiKeyPlaceholder',
+                )}
+                className="no-drag font-mono"
+              />
+              {activeLLMConnection.apiKey !== STORED_SECRET_PLACEHOLDER ? (
+                <p className="text-xs text-muted-foreground">{t('settings.apiKeyMaskHint')}</p>
+              ) : null}
             </div>
 
             {refineValidationMessage && (

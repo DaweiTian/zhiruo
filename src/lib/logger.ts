@@ -73,11 +73,10 @@ export const initRendererLogger = () => {
   }
 
   console.log = (...args: unknown[]) => {
-    logWithLevel('info', args)
+    // 0.5.15 起仅 warn/error 写入日志文件，log/info/debug 保留 devtools 输出
     original.log(...args)
   }
   console.info = (...args: unknown[]) => {
-    logWithLevel('info', args)
     original.info(...args)
   }
   console.warn = (...args: unknown[]) => {
@@ -89,7 +88,6 @@ export const initRendererLogger = () => {
     original.error(...args)
   }
   console.debug = (...args: unknown[]) => {
-    logWithLevel('debug', args)
     original.debug(...args)
   }
 

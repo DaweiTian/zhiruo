@@ -3,7 +3,7 @@ use crate::audio::{
     now_ms, session_time_limit_reached, AudioChunkPayload, SessionStatus, StreamingAudioEndPayload,
     StreamingAudioFramePayload, SESSION_MAX_DURATION_SECONDS,
 };
-use crate::config::{AppConfig, ConfigSecretRequest, StorageRoot};
+use crate::config::{AppConfig, StorageRoot};
 use crate::filler;
 use crate::history::HistoryManager;
 use crate::hotkey;
@@ -240,6 +240,16 @@ impl OverlayFrame {
             x / self.window_scale,
             y / self.window_scale,
         ));
+        // The capsule just moved under a possibly stationary cursor (double-click
+        // reset, drag-end snap, show): "is the cursor over the visible capsule"
+        // changed without a single mouse message, so re-run the hover-passthrough
+        // decision once here. This is the single funnel for every Rust-side
+        // window move; renderer-side drag moves (`setPosition` from the drag
+        // loop) are covered by the gesture grab instead. The hit rect itself is
+        // window-relative, so a move cannot stale it.
+        if let Some(kind) = crate::mouse::CapsuleKind::from_label(win.label()) {
+            crate::mouse::refresh_capsule_hover(kind);
+        }
     }
 }
 
@@ -1449,16 +1459,6 @@ pub fn set_hotkey_capture_active(state: State<AppState>, active: bool) {
 }
 
 #[tauri::command]
-pub fn get_config_secret(
-    window: WebviewWindow,
-    state: State<AppState>,
-    request: ConfigSecretRequest,
-) -> Result<String, String> {
-    only_main_window(&window, "Saved API key access")?;
-    state.config.get_secret(&request)
-}
-
-#[tauri::command]
 pub async fn test_refine_connection(
     state: State<'_, AppState>,
     config: Value,
@@ -1728,20 +1728,29 @@ pub fn switch_storage_root(window: WebviewWindow, target: StorageRoot) -> Result
     crate::config::switch_storage_root(target)
 }
 
+/// Append one line to `voice-key.log` — the app's user-facing log file.
+///
+/// **Level threshold is WARN.** Only `warn` / `error` entries are written;
+/// `debug` / `info` (and anything unrecognized) are dropped here so the file
+/// cannot grow on routine chatter no matter what a caller sends. The renderer
+/// logger mirrors the same threshold, but this sink is the authoritative gate.
+/// Window-operation traces (`windowing::trace`, a separate `[win]` channel) stay
+/// opt-in via `VOICEKEY_TRACE=1`.
+///
+/// The payload is untrusted renderer input, so the message is sanitized at the
+/// boundary: capped in length, control characters dropped (line breaks escaped),
+/// and `sk-…` style API keys redacted so no secret can land in the file even if
+/// a future caller logs one by mistake.
 #[tauri::command]
 pub fn log(entry: Value) -> Result<(), String> {
+    // Gate first: sub-WARN entries must cost nothing (no dir create, no I/O).
+    let level = entry.get("level").and_then(|v| v.as_str()).unwrap_or("info");
+    if !matches!(level, "warn" | "error") {
+        return Ok(());
+    }
+    let message = sanitize_log_message(entry.get("message").and_then(|v| v.as_str()).unwrap_or(""));
     let dir = crate::config::log_dir();
     let path = dir.join("voice-key.log");
-    let level = entry
-        .get("level")
-        .and_then(|v| v.as_str())
-        .unwrap_or("info");
-    let message = entry
-        .get("message")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r");
     let line = format!(
         "{} [{level}] {message}\n",
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f")
@@ -1753,6 +1762,54 @@ pub fn log(entry: Value) -> Result<(), String> {
         .open(path)
         .map_err(|e| e.to_string())?;
     file.write_all(line.as_bytes()).map_err(|e| e.to_string())
+}
+
+/// Boundary sanitization for log messages: cap length, escape line breaks,
+/// drop other control characters (incl. ANSI escape fragments), redact
+/// `sk-…` API-key-shaped tokens.
+fn sanitize_log_message(message: &str) -> String {
+    const MAX_LOG_MESSAGE_CHARS: usize = 4096;
+    let mut out = String::with_capacity(message.len().min(MAX_LOG_MESSAGE_CHARS));
+    for ch in message.chars().take(MAX_LOG_MESSAGE_CHARS) {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push('\t'),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    redact_api_key_tokens(&out)
+}
+
+/// Mask `sk-…` tokens (the key shape of every configured provider) at token
+/// boundaries, e.g. `sk-c2e5…` → `sk-***`. The boundary check keeps ordinary
+/// words like `task-…` intact.
+fn redact_api_key_tokens(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let at_token_start = i == 0 || !chars[i - 1].is_ascii_alphanumeric();
+        if at_token_start
+            && i + 3 <= chars.len()
+            && chars[i] == 's'
+            && chars[i + 1] == 'k'
+            && chars[i + 2] == '-'
+        {
+            out.push_str("sk-***");
+            i += 3;
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '-' || chars[i] == '_')
+            {
+                i += 1;
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 #[tauri::command]
@@ -1770,11 +1827,132 @@ pub fn remove_linux_integration() -> platform::LinuxIntegrationStatus {
     platform::remove_linux_integration()
 }
 
+/// Legacy raw cursor-events toggle. The capsule windows' flag is owned by the
+/// hover-passthrough mechanism (`mouse.rs`) since 0.5.15 — the renderer no
+/// longer calls this for them — but the command stays for compatibility and
+/// mirrors the applied value into the mechanism's flip de-dup state, so a
+/// stray call can never leave that bookkeeping stale and swallow a later flip.
 #[tauri::command]
 pub fn set_ignore_mouse_events(window: WebviewWindow, ignore: bool) -> Result<(), String> {
+    if let Some(kind) = crate::mouse::CapsuleKind::from_label(window.label()) {
+        crate::mouse::sync_ignore_state(kind, ignore);
+    }
     window
         .set_ignore_cursor_events(ignore)
         .map_err(|e| e.to_string())
+}
+
+/// Renderer-reported visible-capsule rect for the hover-passthrough hit test
+/// (`src/lib/tauri-api.ts`): invoke name `set_overlay_hit_rect`, argument
+/// `rect: { x, y, width, height } | null`, all **logical px relative to the
+/// invoking window's client origin** (`getBoundingClientRect` coordinates).
+/// `null` clears the capsule ("it is gone": the window goes fully
+/// pass-through). Only the `overlay` and `session` windows may call it — the
+/// label selects which capsule's state is written, so a misrouted call can
+/// never touch the other capsule.
+#[derive(serde::Deserialize)]
+pub struct HitRectPayload {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+/// Validate + clamp a renderer-reported capsule rect and convert it to the
+/// **physical**, window-relative px `mouse.rs` tests against.
+///
+/// The invoke boundary is untrusted (`HUD.tsx` measures a DOM rect, but any
+/// window may invoke this), so: every field must be finite, the area must be
+/// positive, and the rect is intersected with the window (the capsule lives
+/// inside it) before the physical conversion rounds **outward**
+/// (floor origin / ceil size) — the tested rect must never under-cover the DOM
+/// hit zone or edge presses would leak through to the app below (0.5.1).
+/// `None` = nothing usable (the caller reports an error rather than clearing
+/// an existing rect).
+fn clamped_hit_rect(
+    rect: &HitRectPayload,
+    window_logical: (f64, f64),
+    scale: f64,
+) -> Option<crate::mouse::HitRect> {
+    if !(rect.x.is_finite()
+        && rect.y.is_finite()
+        && rect.width.is_finite()
+        && rect.height.is_finite()
+        && scale.is_finite()
+        && scale > 0.0)
+    {
+        return None;
+    }
+    if rect.width <= 0.0 || rect.height <= 0.0 {
+        return None;
+    }
+    let (win_w, win_h) = window_logical;
+    let x0 = rect.x.clamp(0.0, win_w);
+    let y0 = rect.y.clamp(0.0, win_h);
+    let x1 = (rect.x + rect.width).clamp(0.0, win_w);
+    let y1 = (rect.y + rect.height).clamp(0.0, win_h);
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(crate::mouse::HitRect {
+        x: (x0 * scale).floor() as i32,
+        y: (y0 * scale).floor() as i32,
+        w: ((x1 - x0) * scale).ceil().max(1.0) as i32,
+        h: ((y1 - y0) * scale).ceil().max(1.0) as i32,
+    })
+}
+
+/// Which capsule a hover-passthrough command belongs to. Anything but the two
+/// capsule windows is rejected: invoke callers are untrusted and the settings
+/// window must never be able to grab (or pass through) capsule state.
+fn capsule_kind(window: &WebviewWindow) -> Result<crate::mouse::CapsuleKind, String> {
+    crate::mouse::CapsuleKind::from_label(window.label())
+        .ok_or_else(|| format!("{} is not a capsule window", window.label()))
+}
+
+/// Push the visible-capsule rect (or clear it) into the hover-passthrough hit
+/// test. See [`HitRectPayload`] for the contract; the payload is clamped and
+/// converted here (logical → physical, window-relative) before it reaches
+/// `mouse.rs`, and the window `hwnd` is refreshed so the hook's hit test keeps
+/// working after a window rebuild.
+#[tauri::command]
+pub fn set_overlay_hit_rect(
+    window: WebviewWindow,
+    rect: Option<HitRectPayload>,
+) -> Result<(), String> {
+    let kind = capsule_kind(&window)?;
+    // The OS-reported scale factor backs a `clamp` below (which panics on a
+    // NaN bound), so treat a pathological value as 1.0 before anything uses it.
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let window_logical = window
+        .inner_size()
+        .map(|size| (size.width as f64 / scale, size.height as f64 / scale))
+        .unwrap_or(OVERLAY_FALLBACK_SIZE);
+    let hit = rect
+        .as_ref()
+        .and_then(|r| clamped_hit_rect(r, window_logical, scale));
+    if rect.is_some() && hit.is_none() {
+        // A malformed rect is a renderer bug, not a clear: refuse loudly
+        // instead of silently pass-through-ing a visible capsule.
+        return Err("Invalid capsule hit rect".into());
+    }
+    let hwnd = window.hwnd().map(|hwnd| hwnd.0 as isize).unwrap_or(0);
+    crate::mouse::register_capsule_window(kind, hwnd);
+    crate::mouse::set_capsule_hit_rect(kind, hit);
+    Ok(())
+}
+
+/// Renderer interaction lock for the hover-passthrough mechanism: while
+/// `grabbed` (a pointer gesture or recording is in flight), the capsule window
+/// stays interactive no matter where the cursor is — a hover flip mid-press
+/// would otherwise tear the gesture in half. Released when the gesture state
+/// machine returns to idle.
+#[tauri::command]
+pub fn set_overlay_hover_grab(window: WebviewWindow, grabbed: bool) -> Result<(), String> {
+    let kind = capsule_kind(&window)?;
+    crate::mouse::set_capsule_grab(kind, grabbed);
+    Ok(())
 }
 
 /// Resize the HUD overlay capsule (logical px) and keep it anchored to its
@@ -1892,15 +2070,15 @@ pub fn set_overlay_position(
     Ok(docked.map(str::to_string))
 }
 
-/// Show the main (settings) window, rebuilding it on demand if the delayed
-/// destroy already reclaimed it (`windowing::ensure_main_window`).
+/// Show the main window at the settings page, rebuilding it on demand if the
+/// delayed destroy already reclaimed it (`windowing::ensure_main_window`).
 ///
 /// `async` on purpose: on Windows, creating a webview window from a
 /// synchronous IPC handler deadlocks (WebView2 reentrancy, wry#583), so the
 /// window work runs on the async runtime / a worker thread instead.
 #[tauri::command]
 pub async fn show_settings_window(app: AppHandle) -> Result<(), String> {
-    crate::windowing::open_main_window(&app);
+    crate::windowing::open_main_window(&app, "/settings");
     Ok(())
 }
 
@@ -1988,6 +2166,113 @@ mod tests {
             crate::windowing::OVERLAY_WINDOW_LABEL,
             crate::windowing::SESSION_WINDOW_LABEL
         );
+    }
+
+    // ---- hover-passthrough hit rect (invoke boundary) ----------------------
+
+    use crate::mouse::HitRect;
+
+    /// A well-formed rect survives the round through the clamp unchanged at
+    /// scale 1 and is rounded **outward** at fractional scales, so the tested
+    /// rect can never under-cover the DOM hit zone (edge presses must keep
+    /// working — 0.5.1).
+    #[test]
+    fn clamped_hit_rect_converts_and_rounds_outward() {
+        let rect = HitRectPayload {
+            x: 88.0,
+            y: 14.0,
+            width: 104.0,
+            height: 36.0,
+        };
+        assert_eq!(
+            clamped_hit_rect(&rect, (280.0, 64.0), 1.0),
+            Some(HitRect {
+                x: 88,
+                y: 14,
+                w: 104,
+                h: 36
+            })
+        );
+        // 1.25 scale with fractional logical coords: origin floors, size ceils.
+        let frac = HitRectPayload {
+            x: 10.2,
+            y: 10.2,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert_eq!(
+            clamped_hit_rect(&frac, (280.0, 64.0), 1.25),
+            Some(HitRect {
+                x: 12,  // floor(12.75)
+                y: 12,
+                w: 13,  // ceil(12.5)
+                h: 13
+            })
+        );
+    }
+
+    /// A rect poking outside the window is intersected with it (the capsule
+    /// lives inside the window); one entirely outside collapses to nothing.
+    #[test]
+    fn clamped_hit_rect_clamps_into_the_window() {
+        let poking = HitRectPayload {
+            x: 250.0,
+            y: 50.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        assert_eq!(
+            clamped_hit_rect(&poking, (280.0, 64.0), 1.0),
+            Some(HitRect {
+                x: 250,
+                y: 50,
+                w: 30,
+                h: 14
+            })
+        );
+        let outside = HitRectPayload {
+            x: 500.0,
+            y: 500.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert_eq!(clamped_hit_rect(&outside, (280.0, 64.0), 1.0), None);
+    }
+
+    /// Hostile / malformed invoke payloads can never panic or produce a
+    /// usable rect: non-finite fields, zero/negative areas and degenerate
+    /// scales all resolve to "nothing usable".
+    #[test]
+    fn clamped_hit_rect_rejects_malformed_input() {
+        let nan = HitRectPayload {
+            x: f64::NAN,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert_eq!(clamped_hit_rect(&nan, (280.0, 64.0), 1.0), None);
+        let zero_area = HitRectPayload {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 10.0,
+        };
+        assert_eq!(clamped_hit_rect(&zero_area, (280.0, 64.0), 1.0), None);
+        let negative = HitRectPayload {
+            x: 0.0,
+            y: 0.0,
+            width: -10.0,
+            height: 10.0,
+        };
+        assert_eq!(clamped_hit_rect(&negative, (280.0, 64.0), 1.0), None);
+        let ok = HitRectPayload {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert_eq!(clamped_hit_rect(&ok, (280.0, 64.0), 0.0), None);
+        assert_eq!(clamped_hit_rect(&ok, (280.0, 64.0), f64::NAN), None);
     }
 
     // ---- capsule-frame edge snapping -------------------------------------
@@ -2412,5 +2697,33 @@ mod tests {
             let again = snap.unwrap();
             assert_center_on_edge(WINDOW, COMPACT, again, edge);
         }
+    }
+
+    // ---- log message sanitization -------------------------------------------
+
+    /// Line breaks are escaped (single-line log records) and other control
+    /// characters (ANSI escape fragments etc.) are dropped.
+    #[test]
+    fn sanitize_log_message_escapes_breaks_and_drops_controls() {
+        let out = sanitize_log_message("a\nb\r\u{1b}[31mc\td");
+        assert_eq!(out, "a\\nb\\r[31mc\td");
+    }
+
+    /// `sk-…` tokens are masked at token boundaries; ordinary words containing
+    /// the same letters are left alone.
+    #[test]
+    fn sanitize_log_message_redacts_api_key_tokens() {
+        assert_eq!(
+            sanitize_log_message("key sk-c2e53kizwio8btm failed"),
+            "key sk-*** failed"
+        );
+        assert_eq!(sanitize_log_message("task-name stays"), "task-name stays");
+    }
+
+    /// The length cap keeps a hostile renderer from bloating the log file.
+    #[test]
+    fn sanitize_log_message_caps_length() {
+        let out = sanitize_log_message(&"x".repeat(5000));
+        assert_eq!(out.chars().count(), 4096);
     }
 }

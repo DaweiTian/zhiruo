@@ -135,11 +135,21 @@ static SESSION_CREATION_LOCK: Mutex<()> = Mutex::new(());
 /// traces are only useful if they land in that file, so they go through this
 /// helper instead of a `log` macro.
 ///
-/// Kept deliberately cheap and narrow: one short append per window lifecycle
-/// operation (a handful per session, well under 30 lines), no transcript text,
-/// no credentials, no per-frame logging. Permanent diagnostic value for every
-/// future white-flash / ghost-bar / focus report - do not remove.
+/// **Gated: `VOICEKEY_TRACE=1` enables the file writes, default is silent.**
+/// Normal runs only keep WARN/ERROR output (`env_logger`'s `warn` default
+/// filter set in `lib.rs`); this helper then touches nothing at all. When
+/// diagnosing a white-flash / ghost-bar / focus report, set `VOICEKEY_TRACE=1`
+/// and reproduce: the `[win]` lines (session start entry, overlay/session show
+/// chains, hidden-state ghost nudges, focus changes, session hide park
+/// position) land in `voice-key.log` again with no transcript text and no
+/// credentials. The function and every call site stay in place for exactly
+/// that - do not remove them.
 pub fn trace(message: &str) {
+    // Cheap early-out so the per-focus-change call sites cost an env lookup and
+    // nothing else when tracing is off.
+    if std::env::var("VOICEKEY_TRACE").ok().as_deref() != Some("1") {
+        return;
+    }
     use std::io::Write;
     let path = crate::config::log_dir().join("voice-key.log");
     let line = format!(
@@ -580,6 +590,39 @@ pub fn harden_app_windows<R: tauri::Runtime>(app: &AppHandle<R>) {
 }
 
 // ---------------------------------------------------------------------------
+// Launch-source detection (autostart marker)
+// ---------------------------------------------------------------------------
+
+/// The marker argument `tauri_plugin_autostart::init` writes into the
+/// launch-at-login entry (`"{exe path}" --autostart` in the Run registry key /
+/// launch agent / desktop file). Its presence in the process argv is the *only*
+/// thing that tells an OS-triggered login start apart from a manual launch:
+/// without it both arrive as a plain start and the main window popped at every
+/// login. Manual launches never carry it, so they keep showing the main window.
+pub const AUTOSTART_LAUNCH_ARG: &str = "--autostart";
+
+/// True when any of `args` carries [`AUTOSTART_LAUNCH_ARG`]. Separate from
+/// [`launched_by_autostart`] so the single-instance callback can check the
+/// *second* process's argv (the marker travels through the plugin's argv
+/// hand-off) instead of this process's.
+pub fn has_autostart_arg<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .any(|arg| arg.as_ref() == AUTOSTART_LAUNCH_ARG)
+}
+
+/// True when *this* process was started by the OS autostart entry. Checked in
+/// `lib.rs`'s `setup`: an autostart launch must keep the main window completely
+/// hidden (tray + HUD capsule only), while a manual launch shows it through the
+/// regular hardened open path.
+pub fn launched_by_autostart() -> bool {
+    has_autostart_arg(std::env::args())
+}
+
+// ---------------------------------------------------------------------------
 // Main window hide-to-tray / delayed-destroy lifecycle
 // ---------------------------------------------------------------------------
 
@@ -654,7 +697,13 @@ pub fn schedule_main_window_destroy<R: tauri::Runtime>(app: &AppHandle<R>) {
 /// the Windows focus-frame hardening so every show/set_focus path is covered.
 ///
 /// Threading: only call from worker threads - see [`MAIN_CREATION_LOCK`].
-pub fn ensure_main_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
+///
+/// `route` is only consulted when the window must be rebuilt (it is baked into
+/// the new window's URL); an already-live window keeps its current document.
+pub fn ensure_main_window<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    route: &str,
+) -> Option<WebviewWindow<R>> {
     cancel_main_window_destroy();
     let _guard = MAIN_CREATION_LOCK
         .lock()
@@ -663,7 +712,7 @@ pub fn ensure_main_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<Webvi
         harden_main_window(&window);
         return Some(window);
     }
-    match build_main_window(app) {
+    match build_main_window(app, route) {
         Ok(window) => Some(window),
         Err(e) => {
             // A concurrent open won the race (duplicate label) or creation
@@ -676,15 +725,34 @@ pub fn ensure_main_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<Webvi
     }
 }
 
-/// Show (and focus) the main window, rebuilding it if the delayed destroy
-/// already reclaimed it. Safe to call from any event handler or command: the
-/// get-or-create runs on a dedicated worker thread so the main thread is always
-/// free to process the window-creation message (creating a webview window while
-/// blocking the main thread deadlocks on Windows, wry#583).
-pub fn open_main_window<R: tauri::Runtime>(app: &AppHandle<R>) {
+/// Show (and focus) the main window at `route`, rebuilding it if the delayed
+/// destroy already reclaimed it. Safe to call from any event handler or
+/// command: the get-or-create runs on a dedicated worker thread so the main
+/// thread is always free to process the window-creation message (creating a
+/// webview window while blocking the main thread deadlocks on Windows,
+/// wry#583).
+///
+/// `route` is the hash route to land on (`"/home"`, `"/settings"`, …): a
+/// rebuilt window boots straight into it (URL fragment), and a live window is
+/// steered there via `hashchange` so e.g. a tray click always opens the main
+/// interface instead of whatever page was last up. Unknown values fall back to
+/// `"/home"` — the route is embedded in a `eval`ed script and a URL fragment,
+/// so only the known set is ever passed through.
+pub fn open_main_window<R: tauri::Runtime>(app: &AppHandle<R>, route: &str) {
     let handle = app.clone();
-    std::thread::spawn(move || match ensure_main_window(&handle) {
+    let route = match route {
+        "/settings" | "/history" => route.to_string(),
+        _ => "/home".to_string(),
+    };
+    std::thread::spawn(move || match ensure_main_window(&handle, &route) {
         Some(window) => {
+            // Steering a live window: same value on a fresh build (whose URL
+            // already carries the fragment) is a no-op, so this is safe either
+            // way and removes the "which case am I in" bookkeeping. The route
+            // is JSON-escaped first so it can only ever be a string literal.
+            let route_js =
+                serde_json::to_string(route.as_str()).unwrap_or_else(|_| "\"/home\"".into());
+            let _ = window.eval(&format!("window.location.hash = {route_js}"));
             let _ = window.show();
             let _ = window.set_focus();
         }
@@ -695,11 +763,26 @@ pub fn open_main_window<R: tauri::Runtime>(app: &AppHandle<R>) {
 /// Rebuild the main window with the same shape as the `main` entry in
 /// `tauri.conf.json` (1100x720, min 600x500, `decorations: false`, centered).
 /// Keep the two in sync when the config changes.
-fn build_main_window<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+///
+/// One deliberate difference: `tauri.conf.json` creates the window **hidden**
+/// (`"visible": false"`, so an autostart launch can stay silent - see
+/// [`launched_by_autostart`]), while this builder leaves it visible. That is
+/// correct here because a rebuild is only ever reached from an *open* path
+/// ([`open_main_window`] - tray / settings hotkey / single-instance /
+/// `show_settings_window`), which is about to `show()` + `set_focus()` anyway;
+/// the config-created window is the only one that must be able to start hidden.
+///
+/// `route` is the app hash route the rebuilt window boots into (e.g. `"/home"`,
+/// `"/settings"`), baked into the URL so the very first render lands on the
+/// requested page even before any event could be delivered.
+fn build_main_window<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    route: &str,
+) -> tauri::Result<WebviewWindow<R>> {
     let window = tauri::WebviewWindowBuilder::new(
         app,
         MAIN_WINDOW_LABEL,
-        tauri::WebviewUrl::App("index.html".into()),
+        tauri::WebviewUrl::App(format!("index.html#{route}").into()),
     )
     .title("芷若")
     .inner_size(1100.0, 720.0)

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.6.0](https://github.com/BuildWithAIs/voicekey/compare/v0.5.14...v0.6.0) (2026-11-03)
+
+### Features
+
+- **ui:** 主页 UI/UX 整体重构为「语音仪表台」——告别「按住说话 / 今日字数」两张大卡片，改为 **语音控制台条**（待命呼吸指示 + PTT 键帽 + 品牌声波 + 光晕）→ **今日带**（今日字数英雄数字带计数动画 + 今日录音 / 今日时长 / 近 7 天三格）→ **累计数据条**（识别字符总数 / 录音总时长 / 活跃天数 / 峰值日四格一体面板）→ 趋势图；指标按「今日 / 累计」两级分区，发丝线（`gap-px`）分隔替代卡片堆叠，信息密度更清晰、气质更端庄；浅 / 深色与全部六种强调色主题适配，窄窗口响应式收敛，入场动效尊重 `prefers-reduced-motion`
+- **security:** API Key 全程脱敏——粘贴填写时明文可核对，**自动保存确认后即掩码显示且永久不可再查看**；彻底移除明文查看链路（眼睛按钮、`get_config_secret` 命令、`ConfigSecretRequest` / `get_secret` 全链路删除），他人打开设置页无法再复制已保存的密钥；设置页同步提示「确认保存后将自动隐藏」
+- **log:** 应用日志阈值收紧为 **WARN**——`voice-key.log` 权威写入口仅接受 warn / error，debug / info 一律丢弃，日常运行不再产生无意义日志占用磁盘（真机验证：常驻运行零新增）；写入口同时做边界净化：长度截断（4096 字符）、控制字符清洗（防 ANSI 注入）、`sk-…` 密钥串脱敏，附单测锁定
+- **tray:** 托盘行为修正——点击托盘图标 / 「打开芷若」/ 手动启动 / 单实例回调统一落位**主界面**（`/home`），设置快捷键与菜单「设置」落位**设置页**（`/settings`）；重建窗把路由烤进 URL fragment、存活窗经 `eval` 转向 hash（路由白名单 + JSON 字符串字面量转义），未知 hash 回落主界面
+- **overlay:** 悬浮胶囊 **hover 穿透**（0.5.15 开发项随本版入库）——胶囊可见矩形经 `setOverlayHitRect` 推送、Rust `WH_MOUSE_LL` 全局钩子做悬停判定，矩形外的点击 / 滚轮穿透到下层应用；手势 / latch / 录音在途经 `setOverlayHoverGrab` 锁定交互（取消按钮必可点），取代旧「整窗恒可交互」语义，待机与会话两胶囊同机制
+- **changelog:** 更新日志对话框增强——新增语义化版本解析与比较（`compareVersion`，预发布序正确处理），版本过滤不再依赖字符串序
+
+### Notes
+
+- 发布前完成 **5 轮代码审查**（质量 / 安全 / 性能三路独立评审 + 不变量 / 收尾两轮），必修项与加固全部落地：计数动画叶子组件化防整页重渲、`useCountUp` 中断续算不跳变、日志级别门槛前移零 I/O、路由白名单；前端 218 + Rust 92 用例全绿，真机冒烟通过（首页落位 / 新 UI / 日志零新增）
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`
+
 ## [0.5.14](https://github.com/BuildWithAIs/voicekey/compare/v0.5.13...v0.5.14) (2026-10-17)
 
 ### Features

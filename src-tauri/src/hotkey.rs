@@ -361,8 +361,9 @@ fn bind_one<R: Runtime>(app: &AppHandle<R>, accelerator: &str, action: &str) -> 
                 "settings" => {
                     if event.state() == ShortcutState::Pressed {
                         // Rebuilds the main window if the delayed destroy
-                        // reclaimed it (windowing::ensure_main_window).
-                        crate::windowing::open_main_window(&handle);
+                        // reclaimed it (windowing::ensure_main_window) and
+                        // lands on the settings page — this hotkey's purpose.
+                        crate::windowing::open_main_window(&handle, "/settings");
                     }
                 }
                 "translate" => {

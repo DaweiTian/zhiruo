@@ -10,7 +10,7 @@ interface StatsOverviewProps {
 
 const rangeDays = 7
 
-function StatTile({
+function StatCell({
   icon,
   label,
   value,
@@ -22,17 +22,15 @@ function StatTile({
   sub?: ReactNode
 }) {
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md">
-      <div className="flex items-center gap-2 text-[11.5px] font-semibold text-muted-foreground">
-        <span className="grid h-[26px] w-[26px] place-items-center rounded-lg bg-accent text-accent-foreground">
-          {icon}
-        </span>
+    <div className="flex flex-col gap-2 bg-card px-5 py-5">
+      <div className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+        <span className="text-primary/70">{icon}</span>
         {label}
       </div>
-      <div className="tnum mt-3 font-display text-[27px] font-bold tracking-tight text-foreground">
+      <div className="tnum font-display text-[24px] font-bold tracking-tight text-foreground">
         {value}
       </div>
-      {sub ? <div className="mt-1.5 text-[11px] text-muted-foreground">{sub}</div> : null}
+      {sub ? <div className="mt-auto text-[11px] text-muted-foreground">{sub}</div> : null}
     </div>
   )
 }
@@ -42,9 +40,9 @@ export default function StatsOverview({ stats }: StatsOverviewProps) {
   const rangeLabel = t('home.range.label', { count: rangeDays })
 
   return (
-    <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <StatTile
-        icon={<Type className="h-[15px] w-[15px]" />}
+    <section className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border/60 md:grid-cols-4">
+      <StatCell
+        icon={<Type className="h-3.5 w-3.5" />}
         label={t('home.stats.totalCharacters')}
         value={formatNumber(stats.totalCharacters)}
         sub={
@@ -56,8 +54,8 @@ export default function StatsOverview({ stats }: StatsOverviewProps) {
           </span>
         }
       />
-      <StatTile
-        icon={<Volume2 className="h-[15px] w-[15px]" />}
+      <StatCell
+        icon={<Volume2 className="h-3.5 w-3.5" />}
         label={t('home.stats.totalAudio')}
         value={formatDuration(stats.totalAudioMs)}
         sub={
@@ -67,14 +65,14 @@ export default function StatsOverview({ stats }: StatsOverviewProps) {
             : `${rangeLabel} +${formatDuration(stats.recentAudioMs)}`
         }
       />
-      <StatTile
-        icon={<CalendarDays className="h-[15px] w-[15px]" />}
+      <StatCell
+        icon={<CalendarDays className="h-3.5 w-3.5" />}
         label={t('home.stats.activeDays')}
         value={formatNumber(stats.activeDays)}
         sub={t('home.stats.activeDaysHint')}
       />
-      <StatTile
-        icon={<TrendingUp className="h-[15px] w-[15px]" />}
+      <StatCell
+        icon={<TrendingUp className="h-3.5 w-3.5" />}
         label={t('home.stats.peakDay')}
         value={stats.peakDayCharacters > 0 ? formatNumber(stats.peakDayCharacters) : '—'}
         sub={

@@ -293,13 +293,6 @@ impl Default for AppConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigSecretRequest {
-    pub scope: String,
-    pub provider: String,
-}
-
 // ---------------------------------------------------------------------------
 // Storage root: `%APPDATA%\voice-key` (default) or a portable `<exe_dir>\data\`.
 // ---------------------------------------------------------------------------
@@ -681,22 +674,6 @@ impl ConfigStore {
         config.llm_refine.mimo.api_key = mask(&config.llm_refine.mimo.api_key);
         config.llm_refine.custom.api_key = mask(&config.llm_refine.custom.api_key);
         config
-    }
-
-    pub fn get_secret(&self, request: &ConfigSecretRequest) -> Result<String, String> {
-        let config = self.load();
-        match (request.scope.as_str(), request.provider.as_str()) {
-            ("llm-refine", "openai") => Ok(config.llm_refine.openai.api_key),
-            ("llm-refine", "deepseek") => Ok(config.llm_refine.deepseek.api_key),
-            ("llm-refine", "openrouter") => Ok(config.llm_refine.openrouter.api_key),
-            ("llm-refine", "tokendance") => Ok(config.llm_refine.tokendance.api_key),
-            ("llm-refine", "mimo") => Ok(config.llm_refine.mimo.api_key),
-            ("llm-refine", "custom-compatible") => Ok(config.llm_refine.custom.api_key),
-            // The ASR scope keeps the legacy `mimo` provider id (internal
-            // identifier only; the request is generic cloud ASR).
-            ("asr", "mimo") => Ok(config.asr.cloud_api_key),
-            _ => Err("Invalid saved API key request".into()),
-        }
     }
 
     /// Merge partial config, preserving stored secrets when placeholder is echoed back.

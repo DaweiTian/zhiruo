@@ -45,6 +45,10 @@
     "subtitle": "Hold the hotkey and speak — let go to inject the text at your cursor.",
     "charUnit": "chars",
     "recent7": "Last 7 days",
+    "section": {
+      "today": "Today",
+      "total": "All time"
+    },
     "greeting": {
       "morning": "Good morning",
       "afternoon": "Good afternoon",
@@ -230,8 +234,7 @@
     "tokenDanceConnectHelp": "Authorize in the browser to create and save a TokenDance API Key automatically, or paste an existing key below.",
     "tokenDanceConnectSuccess": "TokenDance connected. The authorized API Key has been saved.",
     "tokenDanceConnectFailed": "TokenDance authorization failed: {{message}}",
-    "showRefineKey": "Show refinement key",
-    "hideRefineKey": "Hide refinement key",
+    "apiKeyMaskHint": "Once saved, the key is hidden and cannot be viewed again.",
     "testRefineConnection": "Test Connection",
     "testingRefineConnection": "Testing connection...",
     "durationWarning": "Each recording can last up to 5 minutes.",
@@ -301,7 +304,7 @@
       }
     },
     "troubleshooting": "Troubleshooting",
-    "logsDescription": "Logs are stored locally for {{days}} days. Each log file is limited to {{size}} MB.",
+    "logsDescription": "Logs are stored locally for {{days}} days. Each log file is limited to {{size}} MB. Only warnings and above are recorded, keeping routine chatter off the disk.",
     "viewLogs": "View Logs",
     "storage": {
       "title": "Storage location",

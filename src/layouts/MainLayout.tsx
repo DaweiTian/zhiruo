@@ -165,15 +165,18 @@ export default function MainLayout({ children, currentRoute }: MainLayoutProps) 
             <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
           </aside>
 
-          {/* 折叠/展开按钮 - 贴边，位于侧栏右侧中部 */}
-          {/* 放在 aside 外侧，避免被 aside 的 overflow-hidden 裁剪；z-50 保证在主内容之上 */}
+          {/* 折叠/展开按钮 - 圆心落在用户感知的侧栏右边界（主内容卡片左边界） */}
+          {/* 几何说明：aside 右缘到主内容卡片左边框之间有 p-3（0.75rem）的 gutter， */}
+          {/* 且该 gutter 与侧栏同色（bg-sidebar），导致 aside 右缘不可见； */}
+          {/* 因此按钮向右再偏移 0.75rem，使圆心与卡片左边界对齐，左半压在侧栏列、 */}
+          {/* 右半悬于主内容区。放在 aside 外侧避免 overflow-hidden 裁剪；z-50 保证在主内容之上。 */}
           <button
             type="button"
             onClick={toggleCollapsed}
             aria-label={t(collapsed ? 'nav.expandSidebar' : 'nav.collapseSidebar')}
             title={t(collapsed ? 'nav.expandSidebar' : 'nav.collapseSidebar')}
             aria-expanded={!collapsed}
-            className="no-drag absolute right-0 top-1/2 z-50 flex h-6 w-6 -translate-y-1/2 translate-x-1/2 cursor-pointer items-center justify-center rounded-full border border-primary/20 bg-primary text-primary-foreground shadow-md transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            className="no-drag absolute right-0 top-1/2 z-50 flex h-6 w-6 -translate-y-1/2 translate-x-[calc(50%_+_0.75rem)] cursor-pointer items-center justify-center rounded-full border border-primary/20 bg-primary text-primary-foreground shadow-md transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
           >
             {collapsed ? (
               <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} />

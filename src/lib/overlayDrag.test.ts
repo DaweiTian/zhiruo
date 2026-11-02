@@ -9,6 +9,7 @@ import {
   SILENCE_AUTO_STOP_MS,
   WATCHDOG_MAX_MS,
   initialOverlayDragState,
+  isHoverGrabActive,
   isOverlayEdge,
   isSilenceAutoStopDue,
   onDoubleClick,
@@ -21,6 +22,7 @@ import {
   onWindowBlur,
   resolveInitialDockEdge,
   setWinStart,
+  toOverlayHitRect,
   type DragCommand,
   type OverlayDragState,
 } from './overlayDrag'
@@ -672,5 +674,51 @@ describe('drag emits raw unclamped positions (0.5.7 overflow snap contract)', ()
     expect(cmdTypes(cmds)).toContain('flush-move')
     expect(hasCmd(cmds, 'cancel-session')).toBe(false)
     expect(hasCmd(cmds, 'start-session')).toBe(false)
+  })
+})
+
+// hover 穿透交互锁（0.5.15）：手势在途 / latch / 录音中必须锁定窗口不穿透，
+// 否则异步的 hover 翻转会把按下 / 拖拽 / 「再点一下停止」从中间撕开。纯函数判定，
+// HUD 在状态机每次输出与 overlay-update 两处共用。
+describe('isHoverGrabActive (hover-passthrough gesture lock)', () => {
+  it('locks while a pointer gesture is in flight, whatever the session state', () => {
+    for (const phase of ['pending', 'dragging', 'holding'] as const) {
+      expect(isHoverGrabActive({ phase, latched: false, status: 'idle' })).toBe(true)
+    }
+  })
+
+  it('locks a latched session and any recording so the stop tap always lands', () => {
+    expect(isHoverGrabActive({ phase: 'idle', latched: true, status: 'recording' })).toBe(true)
+    expect(isHoverGrabActive({ phase: 'idle', latched: false, status: 'recording' })).toBe(true)
+  })
+
+  it('releases the lock once the gesture resolved and nothing is recording', () => {
+    for (const status of ['idle', 'processing', 'success', 'error'] as const) {
+      expect(isHoverGrabActive({ phase: 'idle', latched: false, status })).toBe(false)
+    }
+  })
+})
+
+// `toOverlayHitRect`：DOMRect → invoke 载荷的规范化。DOMRect 的几何字段是原型上的
+// getter，直接序列化会得 `{}`，必须显式复制；脏值不得产生热区。
+describe('toOverlayHitRect (DOM rect → hit-rect payload)', () => {
+  it('copies the geometry into a plain object (DOMRect getters do not serialize)', () => {
+    const rect = { x: 88.5, y: 14.25, width: 104, height: 36 }
+    expect(toOverlayHitRect(rect)).toEqual(rect)
+    expect(Object.getPrototypeOf(toOverlayHitRect(rect))).toBe(Object.prototype)
+  })
+
+  it('rejects missing / non-finite / zero-area measurements', () => {
+    expect(toOverlayHitRect(null)).toBeNull()
+    expect(toOverlayHitRect(undefined)).toBeNull()
+    const dirty = [
+      { x: Number.NaN, y: 0, width: 10, height: 10 },
+      { x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 10 },
+      { x: 0, y: 0, width: 0, height: 10 },
+      { x: 0, y: 0, width: 10, height: -1 },
+    ]
+    for (const rect of dirty) {
+      expect(toOverlayHitRect(rect)).toBeNull()
+    }
   })
 })

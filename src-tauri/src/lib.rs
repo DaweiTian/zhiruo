@@ -23,7 +23,13 @@ use state::AppState;
 use tauri::Manager;
 
 pub fn run() {
-    env_logger::init();
+    // Stderr logging with a `warn` default filter: info/debug! calls (e.g. the
+    // translation pipeline's progress lines) are suppressed at the macro level,
+    // so their formatting never even runs. `RUST_LOG` still overrides the
+    // filter (`Env::default` keeps the usual precedence); note this is the
+    // stderr sink only - `voice-key.log` is a separate file written through
+    // `commands::log` (renderer) and `windowing::trace` (opt-in, see there).
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     // MUST be the first thing that happens: `WEBVIEW2_DEFAULT_BACKGROUND_COLOR`
     // is consumed when the WebView2 environment is created, so it has to be in
@@ -47,10 +53,18 @@ pub fn run() {
         // argv to the running instance and exits before any other plugin or
         // `setup` work can double-run (no second tray icon / overlay / hotkey
         // grab / stats-store race). The callback runs in the FIRST instance.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            // Show and focus the running instance's main window, rebuilding it
-            // on a worker thread if the delayed destroy reclaimed it.
-            windowing::open_main_window(app);
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A second process spawned by the OS autostart entry (its argv
+            // carries the `--autostart` marker) must never wake the main
+            // window: that is exactly the "login pops the settings window" bug
+            // the marker exists for. A *manual* second launch keeps its
+            // original meaning: show and focus the running instance's main
+            // window, rebuilding it on a worker thread if the delayed destroy
+            // reclaimed it.
+            if windowing::has_autostart_arg(argv.iter()) {
+                return;
+            }
+            windowing::open_main_window(app, "/home");
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
@@ -58,9 +72,17 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         // Launch-at-login; toggled from the tray menu's checkable item (tray.rs).
+        // The `Some(vec![--autostart])` marker arg is written *into the
+        // autostart entry itself* (`"{exe}" --autostart` in the Run registry
+        // key / launch agent - `auto-launch`'s `enable()` composes the value
+        // from app path + args), which is the only thing that tells an
+        // OS-triggered login start apart from a manual launch. `setup` checks
+        // the argv for it and keeps the main window completely silent on
+        // autostart; entries registered before the marker existed are healed
+        // in `setup` (see `tray::heal_autostart_entry`).
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![windowing::AUTOSTART_LAUNCH_ARG]),
         ))
         .on_window_event(|window, event| {
             // A focus / activation change is what makes WebView2 runtime 144+
@@ -142,6 +164,11 @@ pub fn run() {
                 let _ = main.set_title("芷若");
             }
 
+            // Registry self-heal for launch-at-login entries that predate the
+            // `--autostart` marker: rewrite them (in place, still enabled) so
+            // they carry the marker. See `tray::heal_autostart_entry`.
+            tray::heal_autostart_entry(app.handle());
+
             tray::setup_tray(app.handle())?;
             hotkey::bind_default_hotkeys(app.handle())?;
             // Best-effort first pass of the Windows focus-frame hardening (main
@@ -149,6 +176,20 @@ pub fn run() {
             // missing here is covered by the per-show re-application in
             // `overlay_show` / `windowing::ensure_main_window`.
             windowing::harden_app_windows(app.handle());
+            // Startup visibility of the main window. `tauri.conf.json` creates
+            // it **hidden** (`"visible": false`) so an autostart launch can
+            // stay completely silent - the window is never shown at all, so
+            // there is no flash either way - while the tray icon and the HUD
+            // capsule come up as usual (the capsule is the PTT surface and must
+            // survive a silent start). A manual launch shows the window right
+            // away through `open_main_window`, the same hardened show path
+            // every other open uses (tray x2 / settings hotkey /
+            // `show_settings_window` / single-instance), so the close->hide-
+            // to-tray + delayed-destroy lifecycle, the DWM border suppression
+            // and the pre-show hardening are all reused unchanged.
+            if !windowing::launched_by_autostart() {
+                windowing::open_main_window(app.handle(), "/home");
+            }
             // Middle mouse button push-to-talk (Windows only; no-op elsewhere).
             // The hook installs / removes itself as the setting flips.
             mouse::init(app.handle());
@@ -165,7 +206,6 @@ pub fn run() {
             commands::get_config,
             commands::set_config,
             commands::set_hotkey_capture_active,
-            commands::get_config_secret,
             commands::test_refine_connection,
             commands::connect_token_dance,
             commands::get_app_language,
@@ -198,6 +238,8 @@ pub fn run() {
             commands::set_ignore_mouse_events,
             commands::set_overlay_size,
             commands::set_overlay_position,
+            commands::set_overlay_hit_rect,
+            commands::set_overlay_hover_grab,
             commands::show_settings_window,
             commands::refine_text,
             commands::translate_text,

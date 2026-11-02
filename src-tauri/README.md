@@ -7,9 +7,13 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
 
 - `src/main.rs` - 二进制入口，仅转发到 `voice_key_lib::run()`。
 - `src/lib.rs` - Builder 装配：插件注册（**`tauri-plugin-single-instance` 必须注册在
-  链首**：二次启动把 argv 交给首个实例后立即退出，回调里 `windowing::open_main_window`
-  聚焦/重建已有实例主窗口，不会重复建托盘/overlay/热键、也不会竞态统计数据文件；
-  其余含 `tauri-plugin-autostart`；**`AppState` 在 builder 链上 `manage`（早于任何窗口 /
+  链首**：二次启动把 argv 交给首个实例后立即退出，回调先查 argv——带 `--autostart`
+  标记的二次启动（OS 自启撞上已在运行的实例）静默返回、绝不唤起主窗，手动二次启动
+  则 `windowing::open_main_window` 聚焦/重建已有实例主窗口；不会重复建托盘/overlay/热键、
+  也不会竞态统计数据文件；
+  其余含 `tauri-plugin-autostart`（注册时传 `Some(vec!["--autostart"])` 标记参数：
+  `auto-launch` 的 `enable()` 把 app 路径 + 参数拼成注册表 Run 项值，故自启进程 argv
+  必带 `--autostart`，据此与手动启动分流——见下）；**`AppState` 在 builder 链上 `manage`（早于任何窗口 /
   WebView 加载——配置窗口的 WebView 在 `setup()` 之前就会调用 `get_config`，一旦挪回
   `setup()` 即 `state not managed`，overlay HUD 会丢失持久化贴边形态、首启胶囊半出屏）**）、
   主窗口 CloseRequested → 隐藏到托盘并启动 5 分钟
@@ -21,8 +25,17 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   label 覆盖 main/overlay/session 三窗（session 复用 `harden_overlay_window` 同款
   硬化——同形同需求，漏掉即重蹈蓝边框/白条两个 bug），setup 时对现有窗口做 Windows
   焦点框硬化首遍，并初始化
-  鼠标中键 PTT（`mouse.rs`）与常驻待机 HUD 胶囊（`commands::show_overlay_idle`）。`run()`
-  **第一行**调 `windowing::enable_transparent_webview_background()`（必须在任何窗口/WebView
+  鼠标中键 PTT（`mouse.rs`）与常驻待机 HUD 胶囊（`commands::show_overlay_idle`）。
+  **主窗启动可见性分流（自启静默）**：`tauri.conf.json` 主窗已改 `"visible": false`，
+  setup 用 `windowing::launched_by_autostart()` 查 argv 标记——自启启动**完全不显示主窗**
+  （窗口从未 show，无闪烁；托盘图标与常驻 HUD 胶囊照常，PTT 不受影响），主窗仍可由
+  托盘 / 全局 settings 热键 / `show_settings_window` / 再次手动启动（单实例回调）打开；
+  手动启动则立即 `windowing::open_main_window`（既有硬化 show 路径，close→hide-to-tray、
+  5 分钟延迟销毁重建、single-instance 聚焦、DWM 边框抑制、show 前缓解全不变）。setup
+  另先跑 `tray::heal_autostart_entry` 自愈旧版无标记注册表项（更新后首次自启仍可能弹
+  一次主窗，自愈后不再发生）。`run()` 开头以默认 filter `warn` 初始化 `env_logger`
+  （info/debug 在宏层面即被静默、无格式化开销；`RUST_LOG` 可覆盖），紧接着调
+  `windowing::enable_transparent_webview_background()`（必须在任何窗口/WebView
   创建之前，把 WebView2 垫底层设为全透明，见 `windowing` 条目「白闪」）。
 - `src/windowing.rs` - 窗口生命周期共用逻辑：Windows 焦点框硬化（overlay：
   `WS_EX_NOACTIVATE` + `DWMWA_BORDER_COLOR=NONE` 幂等重施；**另剥离原生标题栏/边框
@@ -75,12 +88,17 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   变体**的问题，与 `WS_EX_NOREDIRECTIONBITMAP` 窗口样式路径不同，同样不再作为否决依据。
   **回退步骤**：删掉 `overlay` 与 `session` 条目各一行 `"noRedirectionBitmap": true`（其余不动）。
   **失败判据（务必先看）**：若任一胶囊窗**内容空白 / 不渲染**，立即删掉该窗那一行并重建。
-  **全链插桩**：`windowing::trace()` 把窗口操作直接追加进
+  **全链插桩（默认静默，诊断时开启）**：`windowing::trace()` 把窗口操作追加进
   `voice-key.log`（渲染层 `log` 命令写的同一个文件——注意 Rust `log::*` 走的是 stderr，
   **不会**进这个文件，故不能用 `log::debug!` 代替），输出 `[win]` 行：session start 入口、
   overlay/session show 全链（含「已可见短路」分支）、每次 ghost-nudge（带 label，只在隐藏态）、
-  `session hide` 的 park 坐标、`focused label=… focused=…`；每会话约 6-9 行，
-  无转写/凭据，永久保留供后续白闪/白条/焦点问题定案。**WebView2 幽灵标题栏（0.5.4 残留白条的根因）**：样式剥离 + DWM 清理之后，胶囊
+  `session hide` 的 park 坐标、`focused label=… focused=…`。**现受环境变量
+  `VOICEKEY_TRACE=1` 门控**：默认一行不写（函数与全部调用点保留勿删——白闪/白条/焦点
+  问题定案还靠它），诊断时设 `VOICEKEY_TRACE=1` 复现、再收 `voice-key.log`；正常运行
+  只留 WARN/ERROR（`lib.rs` 的 `env_logger` 默认 filter `warn`，info/debug 在宏层面静默），
+  插桩行无转写/凭据。另有启动来源检测 `AUTOSTART_LAUNCH_ARG` /
+  `has_autostart_arg` / `launched_by_autostart`（`--autostart` 标记常量与 argv 判定，
+  供 `lib.rs` 的 setup 与单实例回调分流，见 `lib.rs` 条目）。**WebView2 幽灵标题栏（0.5.4 残留白条的根因）**：样式剥离 + DWM 清理之后，胶囊
   上方仍可能出现一条浅色横条（横条文字 = 页面 `<title>`，即「芷若」）、随胶囊拖动、并在窗口
   激活 / 聚焦切换时出现、点胶囊（触发形变 = resize）或切走后又消失。它**不是窗口样式**
   （`GWL_STYLE` 已无 `WS_CAPTION`，正是两轮样式剥离除不掉的原因），而是 **WebView2 运行时
@@ -151,8 +169,12 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   已存在的同名环境变量不覆盖（尊重外部覆盖）。主窗口隐藏到托盘后延迟 5 分
   钟 `destroy()` 整个 main WebView 进程，5 分钟内重开则通过 generation 计数取消销毁；
   `ensure_main_window` 幂等重建（label 仍为 `"main"`，尺寸/位置/decorations 与
-  `tauri.conf.json` 的 main 条目一致），`open_main_window` 为所有打开路径（托盘
-  x2、settings 快捷键、`show_settings_window` 命令）的安全入口（重建在工作线程执行，
+  `tauri.conf.json` 的 main 条目一致；**唯一刻意不同**：配置创建的主窗是隐藏的
+  （`"visible": false` 供自启静默），重建窗则直接可见——重建只发生在打开路径上、
+  紧跟 `show()`，见 `build_main_window` 注释），`open_main_window(app, route)` 为所有
+  打开路径（托盘 x2、settings 快捷键、`show_settings_window` 命令、手动启动 setup
+  分支、单实例回调）的安全入口：`route`（`/home` / `/settings`）在重建时烤进 URL
+  fragment、对已存活窗口用 `eval` 转向 hash，**托盘点击恒落主界面**（重建在工作线程执行，
   避开 Windows 上 wry#583 主线程建窗死锁）。另有 `ensure_overlay_window`：悬浮胶囊
   正常只 hide/show，但若某条关闭路径真的销毁了 overlay 窗口，它按 `tauri.conf.json`
   的 overlay 条目同形幂等重建（同样只在工作线程调用），保证托盘"显示悬浮胶囊"永远
@@ -170,6 +192,10 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   显示走 `commands::show_overlay_forced`（无视 flag 强制复开）、隐藏走
   `commands::hide_overlay`，两者都会把 flag 与勾选态同步到实际达到的状态
   （`set_overlay_menu_checked` 注册的 checkmark setter 供其他隐藏路径复用）/ Quit。
+  autostart 开关的 `enable()` 把 `--autostart` 标记参数写进注册表项（插件注册时的
+  args），故打开开关即产生**静默**自启项；`heal_autostart_entry` 在 setup 时自愈
+  旧版无标记的注册表项（已启用才重写、不替用户新建；更新后首次自启仍可能弹一次
+  主窗，自愈后不再发生）。
 - `src/commands.rs` - 前端 invoke 命令。HUD overlay 为常驻待机胶囊（启动时显示，
   只渲染待机形态；会话态视觉在 session 窗），定位优先使用持久化拖拽位置
   `app.overlayPosition`（越界时按所在显示器工作区重钳制，
@@ -248,7 +274,18 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
     `OverlayFrame::apply` 在目标坐标与 `outer_position` 相同（±1 物理像素）时跳过
     `set_position`：同坐标 SetWindowPos 无视觉效果但会进入窗口过程，而
     `start_session_internal` 每次启动会话都途经此处且彼时可能仍有指针手势在途
-    （0.5.3 的 pointercancel 教训），故不得空放。`start_session_internal` 是 PTT / 中键 / HUD pointerdown 三路的统一
+    （0.5.3 的 pointercancel 教训），故不得空放；真正移动后顺带
+    `mouse::refresh_capsule_hover`（hover 穿透的悬停重算——`apply` 是 Rust 侧窗口
+    移动的唯一漏斗，光标静止 + 胶囊移位不会产生鼠标消息）。
+    **hover 穿透（0.5.15）**：`set_overlay_hit_rect`（invoke `set_overlay_hit_rect`，
+    参数 `rect: { x, y, width, height } | null`，**逻辑 px、相对调用窗客户区原点**）
+    收渲染层推送的胶囊可见矩形——invoke 边界不可信：字段须有限、面积为正、与窗求
+    交后按 outward rounding（原点 floor / 尺寸 ceil）换算成**窗口相对物理 px** 交给
+    `mouse.rs`（纯函数 `clamped_hit_rect` + 单测），malformed 拒绝而非静默清空；
+    仅 overlay / session 两窗可调（label 归属，其余一律报错）。`set_overlay_hover_grab`
+    为渲染层交互锁（手势 / latch / 录音在途锁定不穿透）。`set_ignore_mouse_events`
+    降级为兼容入口（HUD 已不再调用；若被调用则把值镜像进 mouse.rs 的翻转去重态，
+    防止机制状态失真）。`start_session_internal` 是 PTT / 中键 / HUD pointerdown 三路的统一
     入口：仅 Idle / Completed / Error 可启动，Recording / Processing 一律拒绝并安静
     失败（防止转写/润色的 Processing 窗口内按 PTT 顶掉在途会话造成孤儿录音）；
     启动 / 停止 / 取消 / 出错路径都会清掉 mouse.rs 的中键会话 token。启动时同时
@@ -268,9 +305,15 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
     不混入 flush 等待。
     `overlay_idle_later` 为 `pub(crate)`，`translate.rs` 直接复用（1.2s 回 idle）。
     `show_settings_window` 为 async 命令并经
-    `windowing::open_main_window` 打开/重建主窗口。`set_config` 在 rebind 失败时回滚
+    `windowing::open_main_window` 打开/重建主窗口并导航到 **设置页**（`/settings`；
+    托盘左键、「打开芷若」、手动启动与单实例回调则导航到 **主界面** `/home`，
+    由 `open_main_window` 的 `route` 参数统一落位）。
+    `log` 命令为 `voice-key.log` 的权威写入口，**阈值 WARN**：仅 `warn`/`error`
+    入文件，`debug`/`info` 一律丢弃（渲染层 logger 同阈值，但以本命令为最终闸门）。
+    `set_config` 在 rebind 失败时回滚
     快捷键并返回 `{ config, hotkeyRolledBack }`（渲染层据此覆盖 hotkey 状态清除
-    dirty），并即时应用 `mouse.middleClickPtt`（`mouse.rs` 钩子安装/卸载）；
+    dirty），并即时应用 `mouse.middleClickPtt`（`mouse.rs` 中键分支门控；钩子本体
+    常驻，hover 穿透不受影响）；
     `set_hotkey_capture_active` 维护快捷键录制态守卫。
 - `src/stats.rs` - 独立累计统计存储（`voice-key-stats.json`）：识别字符总数 /
   录音总时长 / 按日统计（`sessions` / `characters` / `audioMs`）只增不减，不受
@@ -293,9 +336,28 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   录制态双守卫，触发时 spawn `translate::translate_selection`（不再向渲染层
   emit 无任何监听者的 `translate` 事件）。
   `main_window_focused` 为 `pub`，供 `mouse.rs` 中键守卫只读复用（逻辑不变）。
-- `src/mouse.rs` - 鼠标中键 PTT（仅 Windows）：独立后台线程跑消息循环并持有
-  `SetWindowsHookExW(WH_MOUSE_LL)` 钩子；`WM_MBUTTONDOWN` 启动会话、
-  `WM_MBUTTONUP` 停止，观察不吞键（始终 `CallNextHookEx`）。钩子回调只做**本地
+- `src/mouse.rs` - Windows 鼠标钩子（仅 Windows）：中键 PTT **与** 胶囊 hover 穿透共用一个
+  常驻 `SetWindowsHookExW(WH_MOUSE_LL)` 钩子（独立后台线程跑消息循环）。
+  **hover 穿透（0.5.15）**：HUD / session 窗是 280×64 透明窗、可见胶囊只占一部分，
+  其余必须让点击 / 滚轮穿透到下层应用（缺陷：贴边后屏内 ~3cm 透明条带吞滚动条、
+  误触发录音）。渲染层经 `commands::set_overlay_hit_rect` 推送胶囊可见矩形（逻辑 px →
+  Rust 钳制 / outward rounding 后存**窗口相对物理 px**，打包进单个 `AtomicU64`，
+  钩子无锁读），钩子在 `WM_MOUSEMOVE` 与按钮事件（严格白名单 `is_hover_update`，
+  滚轮同样排除）用 `GetWindowRect` + 纯函数 `point_in_rect` 判定光标是否落在可见
+  胶囊上，命中状态**翻转时才**经纯函数 `ignore_flip` 下发 worker 调
+  `set_ignore_cursor_events`（不 60Hz IPC 风暴）；渲染层交互锁
+  `commands::set_overlay_hover_grab`（手势 pending / holding / dragging、latched、
+  录音中锁定不穿透）保证 hover 翻转永不撕裂手势；每条 `apply` 后重跑幂等
+  `windowing::harden_overlay_window`（tao 任何 flag 变更都整字重写 `GWL_EXSTYLE`、
+  仅非 focusable 时保留 `WS_EX_NOACTIVATE`——点击胶囊绝不抢焦点，0.5.8 教训）。
+  **渲染层首个矩形推送之前（`CAPSULE_RECEIVED=false`）绝不碰 ignore 标志**（安全
+  默认可交互，渲染层挂了也不会留下点不到的死胶囊）；推送 `null`（胶囊消失）= 恒
+  穿透。窗口移动（拖拽 / 吸附 / 复位）经 `commands::OverlayFrame::apply` 统一触发
+  `refresh_capsule_hover`（光标静止 + 胶囊移位的悬停重算）。非 Windows 为 no-op stub
+  （无钩子即保持旧行为、不回归）。
+  **中键 PTT**：`WM_MBUTTONDOWN` 启动会话、
+  `WM_MBUTTONUP` 停止，观察不吞键（始终 `CallNextHookEx`），由 `mouse.middleClickPtt`
+  （默认 false）门控中键分支（钩子本体常驻、与该设置解耦）。钩子回调只做**本地
   Win32 调用**（`WindowFromPoint`/`GetAncestor` 命中检测）+ 非阻塞入队——LL 钩子
   要求快速返回（~300ms 超时会被系统静默移除）；消息→动作判定为纯函数
   `classify` 且是**严格 `==` 白名单**（仅 519/520），滚轮（`WM_MOUSEWHEEL`=522 /
@@ -319,8 +381,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   click（down 紧接 up）因串行处理天然不留孤儿录音。守卫与键盘 PTT 一致（主窗口
   聚焦 / 快捷键录制态不触发）；落在 HUD 胶囊上的中键（钩子内记下的 root hwnd 与
   overlay 比对）跳过（归悬浮胶囊处理）。`mouse.middleClickPtt`（默认 false）即时
-  控制钩子安装/卸载（线程安全；禁用时补发一次 stop 决策防孤儿录音）；
-  非 Windows 为 no-op stub。
+  门控中键分支（线程安全；禁用时补发一次 stop 决策防孤儿录音；钩子本体常驻不卸载，
+  hover 穿透继续生效）；非 Windows 为 no-op stub。
 - `src/translate.rs` - 选中文字翻译编排（翻译快捷键触发，移植自遗留 Electron 蓝本
   `electron/main/translation/translator.ts`）：剪贴板快照 → 模拟 Ctrl+C +
   哨兵写入/超时轮询读取判定选区 → `llm::translate_text` → 粘贴前复查选区未变 →

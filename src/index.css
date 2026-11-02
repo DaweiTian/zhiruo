@@ -525,6 +525,26 @@ html.vk-theme-changing *::after {
   );
 }
 
+/* 首页仪表台入场：淡入 + 微升（stagger 由内联 animation-delay 控制） */
+.vk-rise {
+  animation: vk-rise 0.5s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes vk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vk-rise {
+    animation: none;
+  }
+}
+
 /* 录音键脉冲光环 */
 .vk-reckey {
   animation: vk-reckey 1.4s ease-out infinite;
@@ -561,6 +581,142 @@ html.vk-theme-changing *::after {
 .vk-history-row {
   content-visibility: auto;
   contain-intrinsic-size: 96px;
+}
+
+/* ============================================================
+   更新日志 Markdown 渲染作用域样式
+   ============================================================ */
+
+.vk-changelog-md {
+  color: var(--muted-foreground);
+}
+
+.vk-changelog-md :first-child {
+  margin-top: 0;
+}
+
+.vk-changelog-md :last-child {
+  margin-bottom: 0;
+}
+
+.vk-changelog-md h1,
+.vk-changelog-md h2,
+.vk-changelog-md h3,
+.vk-changelog-md h4 {
+  color: var(--foreground);
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.35;
+}
+
+.vk-changelog-md h1 {
+  font-size: 1.05em;
+}
+
+.vk-changelog-md h2 {
+  font-size: 1em;
+}
+
+.vk-changelog-md h3 {
+  font-size: 0.95em;
+}
+
+.vk-changelog-md h4 {
+  font-size: 0.9em;
+}
+
+.vk-changelog-md p {
+  margin-top: 0.45rem;
+  margin-bottom: 0.45rem;
+}
+
+.vk-changelog-md ul,
+.vk-changelog-md ol {
+  margin-top: 0.45rem;
+  margin-bottom: 0.45rem;
+  padding-left: 1.25rem;
+}
+
+.vk-changelog-md ul {
+  list-style-type: disc;
+}
+
+.vk-changelog-md ol {
+  list-style-type: decimal;
+}
+
+.vk-changelog-md li {
+  margin-top: 0.2rem;
+  margin-bottom: 0.2rem;
+}
+
+.vk-changelog-md li > p {
+  margin-top: 0.2rem;
+  margin-bottom: 0.2rem;
+}
+
+.vk-changelog-md a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklch, var(--primary) 45%, transparent);
+  transition: text-decoration-color 150ms ease;
+}
+
+.vk-changelog-md a:hover {
+  text-decoration-color: var(--primary);
+}
+
+.vk-changelog-md code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  padding: 0.1em 0.35em;
+  border-radius: 0.3rem;
+  background: color-mix(in oklch, var(--muted-foreground) 12%, transparent);
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+.vk-changelog-md pre {
+  margin-top: 0.6rem;
+  margin-bottom: 0.6rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--muted-foreground) 10%, var(--card));
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.vk-changelog-md pre code {
+  background: transparent;
+  padding: 0;
+  color: var(--foreground);
+  font-size: 0.9em;
+  line-height: 1.5;
+  word-break: normal;
+  white-space: pre;
+}
+
+.vk-changelog-md hr {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.vk-changelog-md strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.vk-changelog-md blockquote {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  margin-left: 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--primary);
+  color: color-mix(in oklch, var(--muted-foreground) 85%, var(--foreground));
 }
 
 /* ============================================================

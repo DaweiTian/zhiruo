@@ -1,9 +1,30 @@
-//! Middle mouse button push-to-talk (Windows only).
+//! Windows mouse hook: middle-button push-to-talk **and** capsule hover
+//! passthrough (Windows only).
 //!
 //! A dedicated background thread owns a low-level mouse hook
-//! (`SetWindowsHookExW(WH_MOUSE_LL)`) and its message pump. `WM_MBUTTONDOWN`
-//! starts a recording session and `WM_MBUTTONUP` stops it — the same
-//! press/release semantics as the keyboard PTT binding in [`crate::hotkey`].
+//! (`SetWindowsHookExW(WH_MOUSE_LL)`) and its message pump. Two independent
+//! consumers share it:
+//!
+//! 1. **Middle-button PTT.** `WM_MBUTTONDOWN` starts a recording session and
+//!    `WM_MBUTTONUP` stops it — the same press/release semantics as the
+//!    keyboard PTT binding in [`crate::hotkey`]. Gated by the
+//!    `mouse.middleClickPtt` setting ([`ENABLED`]).
+//! 2. **Capsule hover passthrough.** The HUD / session windows are 280×64
+//!    transparent windows whose visible capsule covers only part of them; the
+//!    rest must click/scroll **through** to the app below (the reported bug:
+//!    a ~3cm invisible strip next to the docked capsule swallowed scrollbar
+//!    drags and mis-triggered recording). The window's
+//!    `set_ignore_cursor_events` flag is therefore driven from **hover over the
+//!    capsule's visible rect**, which the hook can see even while the window is
+//!    in pass-through mode (a webview `mouseenter` cannot — that is why the old
+//!    "no hover passthrough" decision, recorded in `HUD.tsx`, no longer
+//!    applies). The rect is pushed by the renderer
+//!    (`commands::set_overlay_hit_rect`); hits outside it flip the flag to
+//!    "ignore", hits inside (or an active gesture lock) flip it back.
+//!
+//! The hook itself is installed **whenever the process runs** (decoupled from
+//! [`ENABLED`]); the middle-button branch simply does nothing while the
+//! setting is off.
 //!
 //! Design notes:
 //!
@@ -46,8 +67,12 @@
 //! * **Hook latency budget.** `WH_MOUSE_LL` callbacks must return quickly (the
 //!   system silently removes hooks that block, ~300 ms), so the hook procedure
 //!   only performs *local* Win32 calls (the `WindowFromPoint`/`GetAncestor`
-//!   hit test) and a non-blocking channel send. Every Tauri call (focus guard,
-//!   overlay lookup, session start) runs on a **single serial worker** task.
+//!   hit test for the middle button, `GetWindowRect` + pure rect math for the
+//!   hover hit test) and a non-blocking channel send. Every Tauri call (focus
+//!   guard, overlay lookup, session start, `set_ignore_cursor_events`) runs on
+//!   a **single serial worker** task. Hover is only *decided* in the hook
+//!   ([`ignore_flip`]); the flip is dispatched to the worker and applied
+//!   there, so mouse movement never becomes an IPC storm (state changes only).
 //! * **Serial worker + session token.** Mouse events are queued (mpsc) and
 //!   processed strictly in order by one async task. A Start that succeeds
 //!   records the id of the session it started (the ownership token); a Stop
@@ -72,14 +97,252 @@
 //!   records the root window under the cursor with pure Win32 calls and the
 //!   worker compares it against the overlay's `hwnd`.
 //! * **Thread-safe toggling.** The hook handle is only ever touched by the pump
-//!   thread (single owner): `set_middle_click_ptt` flips an atomic and the
-//!   thread installs/removes the hook itself, so enable/disable can never race
+//!   thread (single owner) and is now **permanent** — hover passthrough needs
+//!   it even while middle-click PTT is off, so the thread installs it at
+//!   startup (retrying slowly on failure) and `set_middle_click_ptt` only
+//!   flips [`ENABLED`], so enable/disable can never race
 //!   `SetWindowsHookExW`/`UnhookWindowsHookEx`. Disabling mid-press queues the
 //!   same stop decision as a button release (minus the bounce re-check) so the
 //!   recording cannot orphan.
+//! * **Hover passthrough state machine.** Per capsule window (overlay /
+//!   session) the module keeps: the renderer-pushed visible rect
+//!   ([`HitRect`], physical px relative to the window, packed lock-free into
+//!   one `AtomicU64` — the hook reads it without locking, see [`pack_hit_rect`]),
+//!   the window `hwnd`, a **grab** lock (renderer says "an interaction is in
+//!   flight": pending / holding / dragging / latched / recording — the flag
+//!   must stay interactive or the gesture would be torn in half by a hover
+//!   flip), and the last-applied ignore flag (flip de-dup). The pure decision
+//!   [`ignore_flip`] computes the next flag and returns `Some` **only on a
+//!   state change**; changes go to the worker, which calls Tauri and then
+//!   re-runs the idempotent `windowing::harden_overlay_window`. **Before the
+//!   renderer has ever pushed a rect (`CAPSULE_RECEIVED = false`) the flag is
+//!   never touched**: the window stays interactive exactly like pre-hover
+//!   builds, so a renderer that fails to push can never leave an unclickable
+//!   capsule (the 0.5.1 lesson). After the first push the mechanism owns the
+//!   flag exclusively; a cleared rect (capsule hidden / webview gone) means
+//!   "always pass through". The hit test uses the window's current
+//!   `GetWindowRect` origin, so a dragged / repositioned window cannot stale
+//!   it; a stationary cursor + a moving window is re-evaluated through
+//!   [`refresh_capsule_hover`], which every Rust-side window move
+//!   (`commands::OverlayFrame::apply`) and every rect / grab push calls.
 //!
 //! Non-Windows builds compile to no-op stubs; no extra crate is required
 //! (`windows-sys` with `Win32_UI_WindowsAndMessaging` already ships).
+
+/// Which capsule window a hover-passthrough entry belongs to. The two windows
+/// are fully independent: each owns its own rect / grab / flag state.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum CapsuleKind {
+    /// The draggable standby HUD (`windowing::OVERLAY_WINDOW_LABEL`).
+    Overlay = 0,
+    /// The session capsule (`windowing::SESSION_WINDOW_LABEL`).
+    Session = 1,
+}
+
+// The kind table is consumed by the Windows hook module; non-Windows builds
+// compile only the stubs below, so keep the helpers warning-free there.
+#[cfg_attr(not(windows), allow(dead_code))]
+impl CapsuleKind {
+    /// Every kind, for iteration over the per-window state tables.
+    pub const ALL: [CapsuleKind; 2] = [CapsuleKind::Overlay, CapsuleKind::Session];
+
+    /// Resolve the capsule a window label belongs to. `None` for any other
+    /// window (`main`, `background`, ...): invoke callers are untrusted and a
+    /// non-capsule window must never be able to grab hover-passthrough state.
+    pub fn from_label(label: &str) -> Option<CapsuleKind> {
+        match label {
+            crate::windowing::OVERLAY_WINDOW_LABEL => Some(CapsuleKind::Overlay),
+            crate::windowing::SESSION_WINDOW_LABEL => Some(CapsuleKind::Session),
+            _ => None,
+        }
+    }
+
+    /// The window label this kind owns.
+    pub fn label(self) -> &'static str {
+        match self {
+            CapsuleKind::Overlay => crate::windowing::OVERLAY_WINDOW_LABEL,
+            CapsuleKind::Session => crate::windowing::SESSION_WINDOW_LABEL,
+        }
+    }
+
+    fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Axis-aligned integer-pixel rect. Used in two coordinate spaces:
+///
+/// * **window-relative physical px** — what [`pack_hit_rect`] stores (the
+///   renderer pushes logical px; the command converts), and
+/// * **screen physical px** — what [`point_in_rect`] tests against (the hook's
+///   `POINT` is a desktop coordinate; the window's `GetWindowRect` origin is
+///   added to the stored rect at test time).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct HitRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+/// Pure hit test: `point` inside `rect`. Left/top edges are inclusive,
+/// right/bottom exclusive — exactly one of two abutting rects can claim a
+/// point on their shared edge, and a point exactly on the capsule's outer edge
+/// still belongs to the capsule (0.5.1: edge presses must work).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn point_in_rect(point: (i32, i32), rect: HitRect) -> bool {
+    let (px, py) = point;
+    let inside_x = px >= rect.x && (px as i64) < rect.x as i64 + rect.w as i64;
+    let inside_y = py >= rect.y && (py as i64) < rect.y as i64 + rect.h as i64;
+    inside_x && inside_y
+}
+
+/// Pack a [`HitRect`] into one `u64` (4 × i16, saturating). One atomic word is
+/// the whole point: the hook callback reads the rect with a single relaxed
+/// load — no lock, no torn multi-field snapshot — while the renderer-side
+/// command writes it with a single store. Every field fits i16 comfortably
+/// (the rect is clamped to the 280×64 window before it ever gets here).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn pack_hit_rect(rect: HitRect) -> u64 {
+    let field = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32) as u16 as u64;
+    field(rect.x) | (field(rect.y) << 16) | (field(rect.w) << 32) | (field(rect.h) << 48)
+}
+
+/// Unpack what [`pack_hit_rect`] stored. `None` for the zero word and for any
+/// degenerate rect (non-positive width / height) — "no capsule" means the
+/// window is fully pass-through.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn unpack_hit_rect(packed: u64) -> Option<HitRect> {
+    let field = |shift: u32| ((packed >> shift) as u16 as i16) as i32;
+    let rect = HitRect {
+        x: field(0),
+        y: field(16),
+        w: field(32),
+        h: field(48),
+    };
+    if rect.w > 0 && rect.h > 0 {
+        Some(rect)
+    } else {
+        None
+    }
+}
+
+/// Pure hover-passthrough decision: the next `set_ignore_cursor_events` value
+/// for one capsule window, or `None` when nothing changes.
+///
+/// The window passes input through **unless** the cursor is over the visible
+/// capsule (`hover_inside`) or the renderer grabbed the interaction
+/// (`grabbed`: a gesture / recording is in flight and must never be cut in
+/// half by a hover flip). Returning `None` on "no change" is what keeps mouse
+/// movement from turning into IPC: only actual state flips are dispatched.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn ignore_flip(prev_ignore: bool, hover_inside: bool, grabbed: bool) -> Option<bool> {
+    let want = !(hover_inside || grabbed);
+    if want != prev_ignore {
+        Some(want)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Hover over the visible capsule: the window must take the click (ignore
+    /// off). Off the capsule: pass through. Edge semantics are locked here
+    /// (left/top inclusive, right/bottom exclusive) so the capsule can never
+    /// grow or shrink a pixel at its boundary.
+    #[test]
+    fn point_in_rect_hits_only_inside_the_capsule() {
+        let rect = HitRect {
+            x: 10,
+            y: 20,
+            w: 32,
+            h: 32,
+        };
+        assert!(point_in_rect((10, 20), rect), "left/top edge is inside");
+        assert!(point_in_rect((41, 51), rect), "deepest inside pixel");
+        assert!(!point_in_rect((42, 20), rect), "right edge is outside");
+        assert!(!point_in_rect((10, 52), rect), "bottom edge is outside");
+        assert!(!point_in_rect((9, 30), rect));
+        assert!(!point_in_rect((30, 19), rect));
+    }
+
+    /// The rect math is done in i64 for the max edge so hostile or degenerate
+    /// input can never overflow and wrap a hit test open.
+    #[test]
+    fn point_in_rect_is_overflow_safe() {
+        let rect = HitRect {
+            x: i32::MAX - 1,
+            y: 0,
+            w: i32::MAX,
+            h: 1,
+        };
+        assert!(!point_in_rect((-1, 0), rect));
+        assert!(point_in_rect((i32::MAX - 1, 0), rect));
+    }
+
+    /// The packed word is the hook's lock-free snapshot: every field must
+    /// round-trip bit-exact, and a degenerate rect must unpack to "no capsule".
+    #[test]
+    fn packed_hit_rect_round_trips() {
+        for rect in [
+            HitRect {
+                x: 0,
+                y: 0,
+                w: 1,
+                h: 1,
+            },
+            HitRect {
+                x: -16,
+                y: 48,
+                w: 130,
+                h: 45,
+            },
+            HitRect {
+                x: 280,
+                y: 64,
+                w: 400,
+                h: 120,
+            },
+        ] {
+            assert_eq!(unpack_hit_rect(pack_hit_rect(rect)), Some(rect));
+        }
+        assert_eq!(unpack_hit_rect(0), None, "the zero word is 'no capsule'");
+        let degenerate = HitRect {
+            x: 5,
+            y: 5,
+            w: 0,
+            h: 10,
+        };
+        assert_eq!(unpack_hit_rect(pack_hit_rect(degenerate)), None);
+    }
+
+    /// Flips are dispatched **only** on state change ("no 60Hz IPC storm") and
+    /// the decision is exactly `!(hover || grab)`.
+    #[test]
+    fn ignore_flip_only_fires_on_state_change() {
+        // Cursor on the capsule: the window must become interactive.
+        assert_eq!(ignore_flip(true, true, false), Some(false));
+        // Already interactive: nothing to dispatch.
+        assert_eq!(ignore_flip(false, true, false), None);
+        // Cursor off the capsule, no gesture: pass through.
+        assert_eq!(ignore_flip(false, false, false), Some(true));
+        assert_eq!(ignore_flip(true, false, false), None);
+    }
+
+    /// Regression (gesture lock): while a gesture / recording is in flight the
+    /// window must stay interactive even with the cursor outside the capsule,
+    /// otherwise a hover flip mid-press tears the gesture in half (the pointer
+    /// capture is moot if the window starts ignoring input under the finger).
+    #[test]
+    fn grab_keeps_the_window_interactive_regardless_of_hover() {
+        assert_eq!(ignore_flip(true, false, true), Some(false));
+        assert_eq!(ignore_flip(false, false, true), None);
+        assert_eq!(ignore_flip(false, true, true), None);
+    }
+}
 
 #[cfg(not(windows))]
 pub fn init(_app: &tauri::AppHandle) {}
@@ -90,40 +353,87 @@ pub fn set_middle_click_ptt(_enabled: bool) {}
 #[cfg(not(windows))]
 pub fn clear_owned_session() {}
 
+/// Non-Windows hover-passthrough stubs: there is no `WH_MOUSE_LL` hook to see
+/// hover through a pass-through window, so the flag simply stays interactive
+/// (pre-hover behavior — no regression) and these are no-ops.
+#[cfg(not(windows))]
+pub fn register_capsule_window(_kind: CapsuleKind, _hwnd: isize) {}
+
+#[cfg(not(windows))]
+pub fn set_capsule_hit_rect(_kind: CapsuleKind, _rect: Option<HitRect>) {}
+
+#[cfg(not(windows))]
+pub fn set_capsule_grab(_kind: CapsuleKind, _grabbed: bool) {}
+
+#[cfg(not(windows))]
+pub fn refresh_capsule_hover(_kind: CapsuleKind) {}
+
+#[cfg(not(windows))]
+pub fn sync_ignore_state(_kind: CapsuleKind, _ignore: bool) {}
+
 #[cfg(windows)]
-pub use win::{clear_owned_session, init, set_middle_click_ptt};
+pub use win::{
+    clear_owned_session, init, refresh_capsule_hover, register_capsule_window, set_capsule_grab,
+    set_capsule_hit_rect, set_middle_click_ptt, sync_ignore_state,
+};
 
 #[cfg(windows)]
 mod win {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
     use std::sync::{Mutex, OnceLock, PoisonError};
     use std::time::Duration;
 
     use tauri::{AppHandle, Manager};
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetAncestor, PeekMessageW, SetWindowsHookExW,
-        TranslateMessage, UnhookWindowsHookEx, WindowFromPoint, GA_ROOT, HHOOK, MSG,
-        MSLLHOOKSTRUCT, PM_REMOVE, WH_MOUSE_LL, WM_MBUTTONDOWN, WM_MBUTTONUP,
+        CallNextHookEx, DispatchMessageW, GetAncestor, GetCursorPos, GetWindowRect, PeekMessageW,
+        SetWindowsHookExW, TranslateMessage, WindowFromPoint, GA_ROOT, HHOOK, MSG, MSLLHOOKSTRUCT,
+        PM_REMOVE, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+        WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
+
+    use super::{ignore_flip, pack_hit_rect, point_in_rect, unpack_hit_rect, CapsuleKind, HitRect};
 
     /// Process-wide app handle shared with the hook procedure (a plain
     /// `extern "system"` callback cannot capture state).
     static APP: OnceLock<AppHandle> = OnceLock::new();
 
     /// Desired state of the middle-click push-to-talk hook; mirrors the
-    /// persisted `mouse.middleClickPtt` config.
+    /// persisted `mouse.middleClickPtt` config. **Only gates the middle-button
+    /// branch** — the hook itself is permanent (hover passthrough needs it).
     static ENABLED: AtomicBool = AtomicBool::new(false);
 
-    /// Spawn guard: the pump thread runs for the whole process lifetime and
-    /// only installs/removes the hook as [`ENABLED`] flips.
+    /// Spawn guard: the pump thread runs for the whole process lifetime.
     static THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
+
+    /// Hover-passthrough state, indexed by [`CapsuleKind::index`]. The hook
+    /// callback reads all of it with atomic loads only (module header: no
+    /// locks in the hook).
+    ///
+    /// `hwnd` of the capsule window (0 = unknown; refreshed on every rect
+    /// push). The hit test needs its current `GetWindowRect` origin because
+    /// the window moves (drag, snap, reset) while the rect stays
+    /// window-relative.
+    static CAPSULE_HWND: [AtomicIsize; 2] = [AtomicIsize::new(0), AtomicIsize::new(0)];
+    /// Visible-capsule rect packed by [`pack_hit_rect`] (0 = none).
+    static CAPSULE_RECT: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    /// Whether the renderer ever pushed a rect for this capsule. While this is
+    /// `false` the ignore flag is **never touched** (safe default: interactive,
+    /// exactly like pre-hover builds) — a renderer that fails to push can
+    /// never leave an unclickable capsule behind.
+    static CAPSULE_RECEIVED: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+    /// Renderer-declared interaction lock: a gesture / recording is in flight,
+    /// so the window must stay interactive whatever hover says.
+    static CAPSULE_GRAB: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+    /// Last applied `set_ignore_cursor_events` value, used to dispatch flips
+    /// only on state change.
+    static CAPSULE_IGNORE: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
 
     /// Hook -> serial worker event queue. Unbounded and non-blocking on the
     /// send side so the hook procedure never waits; FIFO order is what makes
     /// "down then up" (fast click) deterministic.
-    static EVENT_TX: OnceLock<UnboundedSender<MiddleEvent>> = OnceLock::new();
+    static EVENT_TX: OnceLock<UnboundedSender<HookEvent>> = OnceLock::new();
 
     /// Ownership token: id of the session the middle button press started.
     /// Only the worker's Stop decision reads it; any start/stop/cancel/error
@@ -131,8 +441,8 @@ mod win {
     /// must not stop anything".
     static OWNED_SESSION: Mutex<Option<String>> = Mutex::new(None);
 
-    /// Middle-button events forwarded from the hook to the serial worker.
-    enum MiddleEvent {
+    /// Events forwarded from the hook to the serial worker.
+    enum HookEvent {
         /// `WM_MBUTTONDOWN`. `root_hwnd` is the top-level window under the
         /// cursor at event time (`GetAncestor(WindowFromPoint(..), GA_ROOT)`),
         /// computed with pure Win32 calls in the hook; the worker compares it
@@ -144,6 +454,10 @@ mod win {
         /// as a release (but never held back by the bounce grace window), so an
         /// owned recording cannot be orphaned.
         Disable,
+        /// Hover-passthrough state flip: the worker performs the Tauri call
+        /// (`set_ignore_cursor_events`) — the hook only decides ([`ignore_flip`])
+        /// and enqueues, so mouse movement never becomes an IPC storm.
+        SetIgnore { kind: CapsuleKind, ignore: bool },
     }
 
     /// Whether the stop decision came from a real button release or from the
@@ -157,10 +471,16 @@ mod win {
         Disable,
     }
 
-    /// Poll interval while the hook is armed (keeps hook latency low) and
-    /// while disarmed (cheap idle).
+    /// Pump tick. The message queue must be drained continuously — that is
+    /// what delivers hook callbacks — so this stays at the low "armed" value
+    /// for the whole process lifetime now (hover flips want low latency: the
+    /// flip must land long before a deliberate click arrives on the capsule).
     const POLL_ARMED: Duration = Duration::from_millis(5);
-    const POLL_DISARMED: Duration = Duration::from_millis(50);
+
+    /// Retry delay after `SetWindowsHookExW` fails. Slow on purpose: a hot
+    /// retry loop would spam the log and burn CPU for a condition that is
+    /// effectively permanent (a hook install fails for process-wide reasons).
+    const HOOK_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
     /// Grace window a release waits out for a possible re-press before it is
     /// allowed to stop the session. Middle-switch chatter (a contact that
@@ -203,31 +523,26 @@ mod win {
         }
     }
 
-    /// Remember the app handle used by the hook procedure and start the serial
-    /// worker that performs all Tauri-side work. Idempotent.
+    /// Remember the app handle used by the hook procedure, start the serial
+    /// worker that performs all Tauri-side work, and spawn the pump thread
+    /// (which installs the permanent hook). Idempotent.
     pub fn init(app: &AppHandle) {
         let _ = APP.set(app.clone());
         spawn_worker();
+        spawn_pump_thread();
     }
 
     /// Apply the `mouse.middleClickPtt` setting. Idempotent and thread-safe;
-    /// effective within one poll tick (≤ 5 ms while turning on).
+    /// effective within one poll tick (≤ 5 ms while turning on). Only gates the
+    /// middle-button branch — the hook stays installed either way (hover
+    /// passthrough owns it independently).
     pub fn set_middle_click_ptt(enabled: bool) {
         let was_enabled = ENABLED.swap(enabled, Ordering::SeqCst);
         if was_enabled && !enabled {
             // Disabling while the button still owns a recording must not leave
             // it running forever (no release event will be delivered once the
-            // hook is gone): queue the same stop decision a release makes.
-            post_event(MiddleEvent::Disable);
-        }
-        if enabled && !THREAD_RUNNING.swap(true, Ordering::SeqCst) {
-            if let Err(e) = std::thread::Builder::new()
-                .name("voicekey-mouse-ptt".into())
-                .spawn(pump_loop)
-            {
-                THREAD_RUNNING.store(false, Ordering::SeqCst);
-                log::error!("mouse: failed to spawn hook thread: {e}");
-            }
+            // branch is gated off): queue the same stop decision a release makes.
+            post_event(HookEvent::Disable);
         }
     }
 
@@ -243,7 +558,7 @@ mod win {
     }
 
     /// Non-blocking enqueue; safe to call from the hook procedure.
-    fn post_event(event: MiddleEvent) {
+    fn post_event(event: HookEvent) {
         if let Some(tx) = EVENT_TX.get() {
             let _ = tx.send(event);
         }
@@ -261,12 +576,27 @@ mod win {
         tauri::async_runtime::spawn(worker_loop(rx));
     }
 
-    async fn worker_loop(mut rx: UnboundedReceiver<MiddleEvent>) {
+    /// Spawn the pump thread (once). It installs the permanent hook itself.
+    fn spawn_pump_thread() {
+        if THREAD_RUNNING.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if let Err(e) = std::thread::Builder::new()
+            .name("voicekey-mouse-ptt".into())
+            .spawn(pump_loop)
+        {
+            THREAD_RUNNING.store(false, Ordering::SeqCst);
+            log::error!("mouse: failed to spawn hook thread: {e}");
+        }
+    }
+
+    async fn worker_loop(mut rx: UnboundedReceiver<HookEvent>) {
         while let Some(event) = rx.recv().await {
             match event {
-                MiddleEvent::Down { root_hwnd } => handle_middle_down(root_hwnd),
-                MiddleEvent::Up => handle_deferred_release(&mut rx).await,
-                MiddleEvent::Disable => handle_middle_up(StopCause::Disable),
+                HookEvent::Down { root_hwnd } => handle_middle_down(root_hwnd),
+                HookEvent::Up => handle_deferred_release(&mut rx).await,
+                HookEvent::Disable => handle_middle_up(StopCause::Disable),
+                HookEvent::SetIgnore { kind, ignore } => apply_ignore_cursor_events(kind, ignore),
             }
         }
     }
@@ -346,38 +676,58 @@ mod win {
     /// Only the physical button decides this; `Disable` deliberately skips the
     /// window (it must always stop, even mid-press). The wait is safe on the
     /// serial worker: events stay queued in order and any `Disable`/press that
-    /// does arrive is handled immediately by this same loop.
-    async fn handle_deferred_release(rx: &mut UnboundedReceiver<MiddleEvent>) {
+    /// does arrive is handled immediately by this same loop. Hover-passthrough
+    /// flips (`SetIgnore`) are orthogonal to the button timeline: they are
+    /// applied immediately and the wait simply continues for the decisive
+    /// event, inside the same overall grace window.
+    async fn handle_deferred_release(rx: &mut UnboundedReceiver<HookEvent>) {
         let started = std::time::Instant::now();
-        match tokio::time::timeout(RELEASE_BOUNCE_WINDOW, rx.recv()).await {
-            // Re-press inside the window: chatter while the button is still
-            // held. Absorb the release and treat the press normally (the
-            // session is still `Recording`, so `start_session_internal`
-            // rejects it as "Already recording" and the token is untouched).
-            Ok(Some(MiddleEvent::Down { root_hwnd })) => {
-                match release_after_bounce_window(Some(started.elapsed())) {
-                    ReleaseResolution::Bounce => {
-                        log::debug!("mouse: release absorbed as switch chatter while scrolling");
-                        handle_middle_down(root_hwnd);
+        loop {
+            let remaining = RELEASE_BOUNCE_WINDOW.saturating_sub(started.elapsed());
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                // Re-press inside the window: chatter while the button is still
+                // held. Absorb the release and treat the press normally (the
+                // session is still `Recording`, so `start_session_internal`
+                // rejects it as "Already recording" and the token is untouched).
+                Ok(Some(HookEvent::Down { root_hwnd })) => {
+                    match release_after_bounce_window(Some(started.elapsed())) {
+                        ReleaseResolution::Bounce => {
+                            log::debug!("mouse: release absorbed as switch chatter while scrolling");
+                            handle_middle_down(root_hwnd);
+                        }
+                        // Only reachable if the timer expired in the same instant
+                        // the press was dequeued: the release had already matured,
+                        // so it stops and the press is a fresh one.
+                        ReleaseResolution::Stop => {
+                            handle_middle_up(StopCause::Release);
+                            handle_middle_down(root_hwnd);
+                        }
                     }
-                    // Only reachable if the timer expired in the same instant
-                    // the press was dequeued: the release had already matured,
-                    // so it stops and the press is a fresh one.
-                    ReleaseResolution::Stop => {
-                        handle_middle_up(StopCause::Release);
-                        handle_middle_down(root_hwnd);
-                    }
+                    return;
+                }
+                // The setting turned off inside the window must still stop at once.
+                Ok(Some(HookEvent::Disable)) => {
+                    handle_middle_up(StopCause::Disable);
+                    return;
+                }
+                // Two releases with no press between them: the button is genuinely
+                // up (chatter would have re-pressed first), so stop.
+                Ok(Some(HookEvent::Up)) => {
+                    handle_middle_up(StopCause::Release);
+                    return;
+                }
+                // Hover flip during the window: orthogonal, apply and keep waiting.
+                Ok(Some(HookEvent::SetIgnore { kind, ignore })) => {
+                    apply_ignore_cursor_events(kind, ignore);
+                }
+                // Channel closed (worker shutting down): the release is moot.
+                Ok(None) => return,
+                // The window elapsed with no re-press: the release is genuine.
+                Err(_elapsed) => {
+                    handle_middle_up(StopCause::Release);
+                    return;
                 }
             }
-            // The setting turned off inside the window must still stop at once.
-            Ok(Some(MiddleEvent::Disable)) => handle_middle_up(StopCause::Disable),
-            // Two releases with no press between them: the button is genuinely
-            // up (chatter would have re-pressed first), so stop.
-            Ok(Some(MiddleEvent::Up)) => handle_middle_up(StopCause::Release),
-            // Channel closed (worker shutting down) or the window elapsed with
-            // no re-press: the release is genuine.
-            Ok(None) => {}
-            Err(_elapsed) => handle_middle_up(StopCause::Release),
         }
     }
 
@@ -440,15 +790,159 @@ mod win {
             .unwrap_or(false)
     }
 
+    // ---- hover passthrough -------------------------------------------------
+
+    /// Remember the capsule window handle the hit test needs. Refreshed by
+    /// every renderer rect push (`commands::set_overlay_hit_rect`), so a
+    /// rebuilt window (the never-destroyed capsules are only rebuilt after a
+    /// hard failure) is picked up with the next push.
+    pub fn register_capsule_window(kind: CapsuleKind, hwnd: isize) {
+        CAPSULE_HWND[kind.index()].store(hwnd, Ordering::SeqCst);
+    }
+
+    /// Store the renderer-reported visible-capsule rect (physical px, relative
+    /// to the window; `None` = capsule gone) and re-evaluate hover at the
+    /// current cursor position. `set_capsule_hit_rect` is the only writer of
+    /// the rect and the only thing that arms the mechanism
+    /// ([`CAPSULE_RECEIVED`]).
+    pub fn set_capsule_hit_rect(kind: CapsuleKind, rect: Option<HitRect>) {
+        CAPSULE_RECEIVED[kind.index()].store(true, Ordering::SeqCst);
+        CAPSULE_RECT[kind.index()].store(rect.map(pack_hit_rect).unwrap_or(0), Ordering::SeqCst);
+        refresh_capsule_hover(kind);
+    }
+
+    /// Renderer interaction lock: while `grabbed`, the window stays
+    /// interactive no matter where the cursor is (a gesture / recording must
+    /// never be torn in half by a hover flip).
+    pub fn set_capsule_grab(kind: CapsuleKind, grabbed: bool) {
+        CAPSULE_GRAB[kind.index()].store(grabbed, Ordering::SeqCst);
+        refresh_capsule_hover(kind);
+    }
+
+    /// Re-evaluate hover at the *current* cursor position. Called from every
+    /// rect / grab push and from `commands::OverlayFrame::apply` after every
+    /// Rust-side window move: a stationary cursor plus a moving capsule
+    /// (double-click reset, drag end, show) changes "is the cursor over the
+    /// capsule" without producing a single mouse message.
+    ///
+    /// The caller's `kind` is accepted for symmetry with the other capsule
+    /// pushes but is not needed here: `evaluate_hover` re-checks *both*
+    /// capsules from one cursor position (idempotent — flips only dispatch on
+    /// a real state change), so no per-kind branch is required.
+    pub fn refresh_capsule_hover(_kind: CapsuleKind) {
+        let mut pt: POINT = unsafe { std::mem::zeroed() };
+        if unsafe { GetCursorPos(&mut pt) } == 0 {
+            return;
+        }
+        evaluate_hover((pt.x, pt.y));
+    }
+
+    /// Mirror an externally applied `set_ignore_cursor_events` value into the
+    /// flip de-dup state. Only the legacy `set_ignore_mouse_events` command
+    /// uses this — hover passthrough is the sole owner of the flag otherwise,
+    /// and without this mirror its "only dispatch on change" bookkeeping could
+    /// go stale and swallow a real flip.
+    pub fn sync_ignore_state(kind: CapsuleKind, ignore: bool) {
+        CAPSULE_IGNORE[kind.index()].store(ignore, Ordering::SeqCst);
+    }
+
+    /// Pure-hit-test wrapper: is `pt` (desktop physical px) inside this
+    /// capsule's visible rect? The stored rect is window-relative, so the
+    /// window's *current* `GetWindowRect` origin is added at test time — that
+    /// is what makes the answer immune to drags / re-anchors. Local Win32
+    /// calls only, so this is safe inside the hook procedure.
+    fn capsule_hit(kind: CapsuleKind, pt: (i32, i32)) -> bool {
+        let Some(rect) = unpack_hit_rect(CAPSULE_RECT[kind.index()].load(Ordering::Relaxed)) else {
+            return false;
+        };
+        let hwnd = CAPSULE_HWND[kind.index()].load(Ordering::Relaxed);
+        if hwnd == 0 {
+            return false;
+        }
+        let mut wr: RECT = unsafe { std::mem::zeroed() };
+        if unsafe { GetWindowRect(hwnd as HWND, &mut wr) } == 0 {
+            return false;
+        }
+        let screen = HitRect {
+            x: rect.x.saturating_add(wr.left),
+            y: rect.y.saturating_add(wr.top),
+            w: rect.w,
+            h: rect.h,
+        };
+        point_in_rect(pt, screen)
+    }
+
+    /// Hover decision + flip dispatch for one cursor position, for both
+    /// capsule windows. Never touches the flag before the renderer's first
+    /// rect push ([`CAPSULE_RECEIVED`] — the unclickable-capsule guard) and
+    /// enqueues a worker event **only** on a real state flip ([`ignore_flip`]).
+    /// Atomic loads/stores plus a non-blocking send: safe from the hook, safe
+    /// from any other thread (`refresh_capsule_hover`).
+    fn evaluate_hover(pt: (i32, i32)) {
+        for kind in CapsuleKind::ALL {
+            let index = kind.index();
+            if !CAPSULE_RECEIVED[index].load(Ordering::SeqCst) {
+                continue;
+            }
+            let hover = capsule_hit(kind, pt);
+            let grabbed = CAPSULE_GRAB[index].load(Ordering::Relaxed);
+            let prev = CAPSULE_IGNORE[index].load(Ordering::Relaxed);
+            if let Some(next) = ignore_flip(prev, hover, grabbed) {
+                // A flip is by definition an inversion, so the expected
+                // previous value is `!next`; the CAS both de-dups concurrent
+                // evaluators (hook thread vs. command threads) and keeps the
+                // "dispatch only on change" promise exact.
+                if CAPSULE_IGNORE[index]
+                    .compare_exchange(!next, next, Ordering::SeqCst, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    post_event(HookEvent::SetIgnore {
+                        kind,
+                        ignore: next,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Apply one hover flip on the serial worker (the Tauri call the hook is
+    /// not allowed to make).
+    fn apply_ignore_cursor_events(kind: CapsuleKind, ignore: bool) {
+        let Some(app) = APP.get() else {
+            return;
+        };
+        let Some(win) = app.get_webview_window(kind.label()) else {
+            return;
+        };
+        if let Err(e) = win.set_ignore_cursor_events(ignore) {
+            log::warn!(
+                "mouse: set_ignore_cursor_events({ignore}) failed for {}: {e}",
+                kind.label()
+            );
+        }
+        // Belt-and-braces: tao rewrites the **whole** `GWL_EXSTYLE` word from
+        // its computed styles on any flag change (`windowing.rs` 0.5.8 lesson —
+        // `apply_diff` runs `SetWindowLongW(GWL_EXSTYLE, to_window_styles().1)`
+        // first), and `set_ignore_cursor_events` is exactly such a change. The
+        // computed word only keeps `WS_EX_NOACTIVATE` while the window is
+        // non-focusable, so re-run the idempotent hardening after every flip:
+        // clicking the now-interactive capsule must never activate it and steal
+        // focus from the app the user is dictating into (the `Focused` handler
+        // in `lib.rs` re-hardens on activation as a second net).
+        crate::windowing::harden_overlay_window(&win);
+    }
+
     /// Hook thread body: keep the message queue pumped (that is what delivers
-    /// low-level hook callbacks) and install/remove the hook as the setting
-    /// flips. The hook handle never leaves this thread.
+    /// low-level hook callbacks) and install the hook. The hook is **permanent**
+    /// (hover passthrough needs it whatever `mouse.middleClickPtt` says), so it
+    /// is installed once and only re-attempted slowly on failure; the handle
+    /// never leaves this thread.
     fn pump_loop() {
         let mut hook: HHOOK = std::ptr::null_mut();
         let mut msg: MSG = unsafe { std::mem::zeroed() };
+        let mut next_install_attempt = std::time::Instant::now();
         loop {
-            let want = ENABLED.load(Ordering::SeqCst);
-            if want && hook.is_null() {
+            if hook.is_null() && std::time::Instant::now() >= next_install_attempt {
                 hook = unsafe {
                     SetWindowsHookExW(
                         WH_MOUSE_LL as _,
@@ -458,16 +952,13 @@ mod win {
                     )
                 };
                 if hook.is_null() {
-                    // Do not retry in a hot loop; the setting can be toggled
-                    // off/on from settings to try again.
+                    // Never retry in a hot loop (a failed install is a
+                    // process-wide condition); back off and try again slowly.
                     log::error!(
-                        "mouse: SetWindowsHookExW(WH_MOUSE_LL) failed; middle-click push-to-talk is off"
+                        "mouse: SetWindowsHookExW(WH_MOUSE_LL) failed; hover passthrough and middle-click push-to-talk are inactive"
                     );
-                    ENABLED.store(false, Ordering::SeqCst);
+                    next_install_attempt = std::time::Instant::now() + HOOK_RETRY_INTERVAL;
                 }
-            } else if !want && !hook.is_null() {
-                unsafe { UnhookWindowsHookEx(hook) };
-                hook = std::ptr::null_mut();
             }
 
             // Drain the thread message queue. Retrieving messages is also what
@@ -479,11 +970,7 @@ mod win {
                 }
             }
 
-            std::thread::sleep(if ENABLED.load(Ordering::SeqCst) {
-                POLL_ARMED
-            } else {
-                POLL_DISARMED
-            });
+            std::thread::sleep(POLL_ARMED);
         }
     }
 
@@ -536,20 +1023,54 @@ mod win {
         lparam: isize,
     ) -> isize {
         if code >= 0 && lparam != 0 {
-            match classify(wparam as u32) {
-                Some(Trigger::Down) => {
-                    let info = &*(lparam as *const MSLLHOOKSTRUCT);
-                    post_event(MiddleEvent::Down {
-                        root_hwnd: root_window_at(info.pt),
-                    });
+            let info = &*(lparam as *const MSLLHOOKSTRUCT);
+            let message = wparam as u32;
+            // Middle-button PTT: gated by its setting (the hook itself is
+            // permanent, see `pump_loop`).
+            if ENABLED.load(Ordering::SeqCst) {
+                match classify(message) {
+                    Some(Trigger::Down) => {
+                        post_event(HookEvent::Down {
+                            root_hwnd: root_window_at(info.pt),
+                        });
+                    }
+                    Some(Trigger::Up) => post_event(HookEvent::Up),
+                    // Wheel / move / other buttons: intentionally inert, so scrolling
+                    // cannot disturb an in-flight middle-button PTT session.
+                    None => {}
                 }
-                Some(Trigger::Up) => post_event(MiddleEvent::Up),
-                // Wheel / move / other buttons: intentionally inert, so scrolling
-                // cannot disturb an in-flight middle-button PTT session.
-                None => {}
+            }
+            // Hover passthrough: independent of the middle-button setting.
+            // Only flips are enqueued ([`evaluate_hover`] / [`ignore_flip`]),
+            // and only with local Win32 calls on this thread.
+            if is_hover_update(message) {
+                evaluate_hover((info.pt.x, info.pt.y));
             }
         }
         CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam)
+    }
+
+    /// Mouse messages that can change where the cursor is relative to a
+    /// capsule: moves plus button transitions (a button event is also the
+    /// recovery nudge for a stationary cursor whose capsule moved underneath
+    /// it). Strict whitelist, deliberately narrow — same wheel-range trap as
+    /// [`classify`]: `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL` sit between
+    /// `WM_MBUTTONUP` and `WM_MOUSELAST`, and a wheel does not move the cursor
+    /// anyway, so widening this can only reintroduce message-range bugs for no
+    /// benefit.
+    fn is_hover_update(message: u32) -> bool {
+        matches!(
+            message,
+            WM_MOUSEMOVE
+                | WM_LBUTTONDOWN
+                | WM_LBUTTONUP
+                | WM_RBUTTONDOWN
+                | WM_RBUTTONUP
+                | WM_MBUTTONDOWN
+                | WM_MBUTTONUP
+                | WM_XBUTTONDOWN
+                | WM_XBUTTONUP
+        )
     }
 
     /// Pure Win32 hit test: the top-level window under the desktop point,
@@ -689,6 +1210,38 @@ mod win {
             }
             // The finger finally lifts: no re-press ever arrives.
             assert_eq!(release_after_bounce_window(None), ReleaseResolution::Stop);
+        }
+
+        /// Hover-passthrough updates are moves plus button transitions — the
+        /// button events are the recovery nudge for a stationary cursor whose
+        /// capsule moved underneath it (double-click reset, drag end). The
+        /// wheel stays out: it does not move the cursor and lives in the same
+        /// `WM_MOUSELAST` range trap as [`classify`], so widening this
+        /// whitelist can only reintroduce message-range bugs.
+        #[test]
+        fn hover_updates_are_moves_and_button_transitions_only() {
+            for message in [
+                WM_MOUSEMOVE,
+                WM_LBUTTONDOWN,
+                WM_LBUTTONUP,
+                WM_RBUTTONDOWN,
+                WM_RBUTTONUP,
+                WM_MBUTTONDOWN,
+                WM_MBUTTONUP,
+                WM_XBUTTONDOWN,
+                WM_XBUTTONUP,
+            ] {
+                assert!(
+                    is_hover_update(message as u32),
+                    "message {message:#06x} must update hover"
+                );
+            }
+            for message in [WM_MOUSEWHEEL, WM_MOUSEHWHEEL, WM_MBUTTONDBLCLK] {
+                assert!(
+                    !is_hover_update(message as u32),
+                    "message {message:#06x} must not update hover"
+                );
+            }
         }
     }
 }

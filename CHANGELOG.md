@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.8.1](https://github.com/DaweiTian/zhiruo/compare/v0.8.0...v0.8.1) (2026-11-07)
+
+### Features
+
+- **hub:** 扇区 hover 动效——绕扇区自身中心放大弹出（1.06）+ 主色提亮 + 柔和辉光，文字同步提亮；仅 ready 态可点扇区触发，`prefers-reduced-motion` 自动降级
+
+### Bug Fixes
+
+- **hub:** 圆环画到窗口对侧的错位（viewBox 反向偏移，贴边时只剩被裁的扇形碎片）——改为偏移圆环 SVG 定位，环心钉回胶囊中心；贴近屏幕边缘但未吸附时由 `edgeFromRingCenter` 自动推导半环朝向（吸附态仍以 `dockEdge` 为准），圆环完整围绕悬浮按钮、不再被窗口裁缺
+- **overlay:** 待机胶囊去文字、恒为圆形 mic 钮（平时 36×36、贴边紧凑 32×32 并贴齐屏幕边），可访问名称保留在 `aria-label`
+
+### Notes
+
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.8.0](https://github.com/DaweiTian/zhiruo/compare/v0.7.0...v0.8.0) (2026-11-07)
 
 ### Features

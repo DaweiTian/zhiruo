@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://github.com/BuildWithAIs/voicekey">
+  <a href="https://github.com/DaweiTian/zhiruo">
     <img src="imgs/logo.png" alt="Zhiruo (芷若) logo" width="96" height="96">
   </a>
 
@@ -19,14 +19,14 @@
   <p>
     <a href="README.zh-CN.md">简体中文</a>
     · <a href="https://voicekey.buildwithais.com/">Website</a>
-    · <a href="https://github.com/BuildWithAIs/voicekey/releases/latest">Download</a>
-    · <a href="https://github.com/BuildWithAIs/voicekey/issues">Issues</a>
+    · <a href="https://github.com/DaweiTian/zhiruo/releases/latest">Download</a>
+    · <a href="https://github.com/DaweiTian/zhiruo/issues">Issues</a>
   </p>
 
   <p>
-    <a href="https://github.com/BuildWithAIs/voicekey/actions/workflows/ci.yml"><img src="https://github.com/BuildWithAIs/voicekey/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-    <a href="https://github.com/BuildWithAIs/voicekey/releases/latest"><img src="https://img.shields.io/github/v/release/BuildWithAIs/voicekey" alt="Latest release"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/github/license/BuildWithAIs/voicekey" alt="MIT license"></a>
+    <a href="https://github.com/DaweiTian/zhiruo/actions/workflows/ci.yml"><img src="https://github.com/DaweiTian/zhiruo/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+    <a href="https://github.com/DaweiTian/zhiruo/releases/latest"><img src="https://img.shields.io/github/v/release/DaweiTian/zhiruo" alt="Latest release"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/DaweiTian/zhiruo" alt="MIT license"></a>
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2f363d" alt="Supported platforms">
   </p>
 </div>
@@ -104,7 +104,7 @@ yet.
 ## Installation
 
 Download the latest build from
-[GitHub Releases](https://github.com/BuildWithAIs/voicekey/releases/latest).
+[GitHub Releases](https://github.com/DaweiTian/zhiruo/releases/latest).
 
 | Platform                    | Package                         | Notes                                                  |
 | --------------------------- | ------------------------------- | ------------------------------------------------------ |
@@ -207,7 +207,7 @@ Leave transcript cleanup and translation disabled to keep only speech recognitio
 ### Development
 
 ```bash
-git clone https://github.com/BuildWithAIs/voicekey.git
+git clone https://github.com/DaweiTian/zhiruo.git
 cd voicekey
 npm ci
 npm run dev
@@ -249,7 +249,7 @@ runtime or UI change.
 
 Contributions are welcome. Before opening a pull request:
 
-1. Search [existing issues](https://github.com/BuildWithAIs/voicekey/issues) or open a focused issue
+1. Search [existing issues](https://github.com/DaweiTian/zhiruo/issues) or open a focused issue
    for a bug or proposal.
 2. Keep privileged operations in the Electron main process and validate renderer-provided IPC
    payloads.

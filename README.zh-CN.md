@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://github.com/BuildWithAIs/voicekey">
+  <a href="https://github.com/DaweiTian/zhiruo">
     <img src="imgs/logo.png" alt="芷若 (Zhiruo) 标志" width="96" height="96">
   </a>
 
@@ -19,14 +19,14 @@
   <p>
     <a href="README.md">English</a>
     · <a href="https://buildwithais.github.io/voicekey/zh/">项目网站</a>
-    · <a href="https://github.com/BuildWithAIs/voicekey/releases/latest">下载</a>
-    · <a href="https://github.com/BuildWithAIs/voicekey/issues">问题反馈</a>
+    · <a href="https://github.com/DaweiTian/zhiruo/releases/latest">下载</a>
+    · <a href="https://github.com/DaweiTian/zhiruo/issues">问题反馈</a>
   </p>
 
   <p>
-    <a href="https://github.com/BuildWithAIs/voicekey/actions/workflows/ci.yml"><img src="https://github.com/BuildWithAIs/voicekey/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
-    <a href="https://github.com/BuildWithAIs/voicekey/releases/latest"><img src="https://img.shields.io/github/v/release/BuildWithAIs/voicekey" alt="最新版本"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/github/license/BuildWithAIs/voicekey" alt="MIT 许可证"></a>
+    <a href="https://github.com/DaweiTian/zhiruo/actions/workflows/ci.yml"><img src="https://github.com/DaweiTian/zhiruo/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
+    <a href="https://github.com/DaweiTian/zhiruo/releases/latest"><img src="https://img.shields.io/github/v/release/DaweiTian/zhiruo" alt="最新版本"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/DaweiTian/zhiruo" alt="MIT 许可证"></a>
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2f363d" alt="支持平台">
   </p>
 </div>
@@ -81,7 +81,7 @@ Hugging Face，任一首选源失败时仍会自动尝试另一来源。切换�
 
 ## 安装
 
-请从 [GitHub Releases](https://github.com/BuildWithAIs/voicekey/releases/latest) 下载最新版本。
+请从 [GitHub Releases](https://github.com/DaweiTian/zhiruo/releases/latest) 下载最新版本。
 
 | 平台                        | 安装包                      | 说明                                       |
 | --------------------------- | --------------------------- | ------------------------------------------ |
@@ -174,7 +174,7 @@ PTT 按下/释放支持；如果没有使用已适配的 Hyprland 集成，请�
 ### 开发环境
 
 ```bash
-git clone https://github.com/BuildWithAIs/voicekey.git
+git clone https://github.com/DaweiTian/zhiruo.git
 cd voicekey
 npm ci
 npm run dev
@@ -214,7 +214,7 @@ build/        安装包图标与打包资源
 
 欢迎提交贡献。发起 Pull Request 前，请：
 
-1. 先搜索[现有 Issues](https://github.com/BuildWithAIs/voicekey/issues)，或为缺陷和建议创建范围
+1. 先搜索[现有 Issues](https://github.com/DaweiTian/zhiruo/issues)，或为缺陷和建议创建范围
    清晰的新 Issue。
 2. 把系统权限操作保留在 Electron 主进程，并校验渲染进程传入的 IPC 数据。
 3. 当行为或模块职责发生实质变化时，同步更新对应目录的 README。

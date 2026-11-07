@@ -5,10 +5,10 @@
   "productName": "芷若",
   "description": "Zhiruo (芷若) — privacy-first push-to-talk voice input for Windows, macOS, and Linux",
   "author": {
-    "name": "BuildWithAIs",
-    "email": "buildwithais@users.noreply.github.com"
+    "name": "DaweiTian",
+    "email": "DaweiTian@users.noreply.github.com"
   },
-  "homepage": "https://github.com/BuildWithAIs/voicekey",
+  "homepage": "https://github.com/DaweiTian/zhiruo",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",

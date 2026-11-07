@@ -2,7 +2,7 @@
 name = "voice-key"
 version = "0.8.0"
 description = "Privacy-first push-to-talk voice input for Windows, macOS, and Linux"
-authors = ["BuildWithAIs"]
+authors = ["DaweiTian"]
 edition = "2021"
 rust-version = "1.77"
 

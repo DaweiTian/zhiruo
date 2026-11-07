@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-const GITHUB_REPO_OWNER: &str = "BuildWithAIs";
-const GITHUB_REPO_NAME: &str = "voicekey";
+// 发布 / 更新源：独立仓库 DaweiTian/zhiruo（2026-11 起脱离上游 fork 网络）。
+// 迁移自 BuildWithAIs/voicekey：发布新版本时 GitHub Release 必须落在本仓库，
+// 否则更新检查与 `open_external` 白名单会指向上游。
+const GITHUB_REPO_OWNER: &str = "DaweiTian";
+const GITHUB_REPO_NAME: &str = "zhiruo";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

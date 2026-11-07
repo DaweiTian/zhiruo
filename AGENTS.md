@@ -12,8 +12,11 @@ Branding (rebranded from "Voice Key"): display layer uses 芷若 (zh) / Zhiruo
 (en), slogan 言若有声，芷若知心。/ "Where voice finds words, and Zhiruo finds
 heart.", olive-green accent (default) and the leaf+soundwave icon from
 `src-tauri/icons-src/icon.svg`. Internal identifiers deliberately stay `voicekey`
-/ `voice-key` (crate name, `tauri.conf.json` identifier, data file names, updater
-repo) — do not rename those; they gate AppData paths and update sources.
+/ `voice-key` (crate name, `tauri.conf.json` identifier, data file names) — do
+not rename those; they gate AppData paths. The app lives in its own independent
+repository `DaweiTian/zhiruo` (2026-11 split from the `BuildWithAIs/voicekey`
+fork network): `updater.rs` `GITHUB_REPO_*` coordinates the release / update
+source and must follow that repo — GitHub Releases belong on `DaweiTian/zhiruo`.
 
 ## Current Structure
 

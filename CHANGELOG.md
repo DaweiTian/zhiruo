@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.8.0](https://github.com/BuildWithAIs/voicekey/compare/v0.7.0...v0.8.0) (2026-11-07)
+
+### Features
+
+- **hub:** 选区快捷动作面板（右键常驻胶囊唤出圆环：翻译 / 润色 / 解释，0.7.0 入库）交互补全——点面板外任意处（含右键）即收起，未完成操作不再滞留屏上；Windows 侧由全局鼠标钩子承接非激活面板收不到 blur 的缺口（严格按钮按下白名单，滚轮 / 抬起 / 移动不触发）
+
+### Bug Fixes
+
+- **hub:** 弹窗去黑底——hub 窗口改走透明窗体路径（`overlay-html`），只画半透明圆弧扇区与浮动信息（下方内容透得出来），不再压一块纯色黑底；顺带抑制 WebView2 默认右键菜单的黑底矩形面板
+- **hub:** 贴边时状态文字半出屏——hub 窗口整只钳进锚点所在屏幕的工作区（复用 `OverlayFrame`），圆环改按 `ringCenter` 偏移钉回胶囊中心；状态文字 / 选区预览 / 结果卡片完整可见，长文案换行不截断；顺带修复动作中段状态载荷丢 `dockEdge` 导致贴边圆环闪回全环
+
+### Notes
+
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`
+
 ## [0.7.0](https://github.com/BuildWithAIs/voicekey/compare/v0.6.0...v0.7.0) (2026-11-07)
 
 ### Features

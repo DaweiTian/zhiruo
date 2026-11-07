@@ -426,7 +426,7 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   锚点）压 hub 窗口中点后**整窗钳进锚点所在屏幕的工作区**（`commands::OverlayFrame`，
   贴边不再半出屏，状态文字 / 结果卡片始终完整可见）；圆环不跟随窗口——环心偏移
   `ringCenter`（webview CSS px，set_position 后按实际落位换算）随载荷下发，
-  渲染层平移 viewBox 把圆环钉回胶囊中心，半环按 `app.overlayDocked` 朝屏幕内
+  渲染层偏移圆环 SVG 把圆环钉回胶囊中心，半环按 `app.overlayDocked` 朝屏幕内
   展开；窗口生命周期归 `windowing::ensure_hub_window`（隐藏 / 重建，绝不销毁）。
   收起 = 渲染层背景点击 / 右键、结果卡片关闭按钮、替换成功延时收起、Windows
   `mouse.rs` 点外收起（`is_open` 供其门禁）。

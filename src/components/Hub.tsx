@@ -8,19 +8,22 @@
  * 窗口透明（`html.overlay-html` 撤掉 body 底色）：只画圆弧扇区与其上的
  * 浮动信息，扇区半透明（下方内容透得出来），不再压一块纯色黑底。
  * 窗口整只钳在屏幕工作区内、圆环不居中——`ringCenter`（环心相对窗口的
- * 偏移）平移 viewBox 把圆环钉回胶囊中心，状态文字 / 结果卡片因此贴边时
+ * 偏移）把圆环 SVG 平移到胶囊中心，状态文字 / 结果卡片因此贴边时
  * 也完整可见；环心偏上时文字翻到窗口下半，绝不压扇区。
+ * 贴边判定 = config `dockEdge`，未吸附但环心距窗口边不足外半径时由
+ * `edgeFromRingCenter` 兜底推导（贴近屏幕边缘同样只展开朝屏幕内的半环）。
  *
  * 状态流由 Rust `hub-update` 驱动：capturing → ready / empty / error →
  * processing → done（改写类，稍后自动收起）/ result（解释类，展示卡片）。
  * 收起：点扇区外任意处 / 右键 / 结果卡片关闭按钮 / Windows 全局钩子的
  * 点外点击（`mouse.rs`）。扇区文字沿弧排布（`textPath`），展开动画见
- * index.css `.hub-sector-in`。
+ * index.css `.hub-sector-in`，hover 动效见 `.hub-sector`。
  */
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   buildHubSectors,
+  edgeFromRingCenter,
   HUB_RING_CENTER,
   HUB_VIEW_SIZE,
   type HubAction,
@@ -82,7 +85,6 @@ export function Hub() {
     result: '',
     message: '',
   })
-  const [hovered, setHovered] = useState<HubAction | null>(null)
   const [copied, setCopied] = useState(false)
   const copiedResetTimerRef = useRef(0)
 
@@ -103,11 +105,17 @@ export function Hub() {
     }
   }, [])
 
-  const sectors = useMemo(() => buildHubSectors(state.dockEdge), [state.dockEdge])
-
   // 只有 ready 态扇区可点；capturing / empty / processing / done / result 只读。
   const interactive = state.status === 'ready'
   const ringDimmed = state.status === 'processing' || state.status === 'done'
+
+  // 贴边判定：吸附态（config dockEdge）优先；未吸附但环心距窗口边不足外半径
+  // （贴近屏幕边缘）由几何推导兜底——全环会被窗口裁缺，同样只展开半环。
+  const dockEdge = useMemo(
+    () => state.dockEdge ?? edgeFromRingCenter(state.ringCenter),
+    [state.dockEdge, state.ringCenter],
+  )
+  const sectors = useMemo(() => buildHubSectors(dockEdge), [dockEdge])
 
   // 浮动信息贴窗口哪条横边：环心偏上（贴上边 / 贴近屏幕上沿）时翻到下半，
   // 避免文字压在扇区上；其余情况保持上沿（自由悬浮的定稿形态）。
@@ -194,16 +202,18 @@ export function Hub() {
         )}
       </div>
 
-      {/* 圆环：viewBox 平移 ringCenter 偏移把圆环钉在胶囊中心（窗口钳入
-          工作区后不再居中）；中孔透明露出下层胶囊。 */}
+      {/* 圆环：viewBox 恒等于窗口坐标系，SVG 整体偏移把环心钉回胶囊中心
+          （窗口钳入工作区后不再居中）；中孔透明露出下层胶囊。 */}
       <svg
-        viewBox={`${state.ringCenter.x - HUB_RING_CENTER} ${
-          state.ringCenter.y - HUB_RING_CENTER
-        } ${HUB_VIEW_SIZE} ${HUB_VIEW_SIZE}`}
+        viewBox={`0 0 ${HUB_VIEW_SIZE} ${HUB_VIEW_SIZE}`}
         className={cn(
-          'absolute inset-0 h-full w-full transition-opacity duration-200',
+          'absolute h-full w-full transition-opacity duration-200',
           ringDimmed && 'opacity-40',
         )}
+        style={{
+          left: state.ringCenter.x - HUB_RING_CENTER,
+          top: state.ringCenter.y - HUB_RING_CENTER,
+        }}
       >
         <defs>
           {sectors.map((sector) => (
@@ -216,39 +226,29 @@ export function Hub() {
             />
           ))}
         </defs>
-        {sectors.map((sector, index) => {
-          const active = interactive && hovered === sector.action
-          return (
-            <g
-              key={sector.action}
-              className="hub-sector-in"
-              style={{
-                animationDelay: `${index * 45}ms`,
-                pointerEvents: interactive ? 'auto' : 'none',
-              }}
-            >
+        {sectors.map((sector, index) => (
+          <g
+            key={sector.action}
+            className="hub-sector-in"
+            style={{
+              animationDelay: `${index * 45}ms`,
+              pointerEvents: interactive ? 'auto' : 'none',
+            }}
+          >
+            {/* hover 动效层（index.css .hub-sector）：放大弹出 + 主色提亮 + 辉光。 */}
+            <g className="hub-sector">
               <path
+                className="hub-sector-fill"
                 d={sector.fillPath}
-                fill={active ? 'var(--primary)' : '#171717'}
-                fillOpacity={active ? 0.5 : 0.58}
-                stroke="rgba(255,255,255,0.16)"
-                strokeWidth={1}
-                style={{
-                  cursor: interactive ? 'pointer' : 'default',
-                  transition: 'fill 150ms, fill-opacity 150ms',
-                }}
+                style={{ cursor: interactive ? 'pointer' : 'default' }}
                 onClick={(event) => runAction(event, sector.action)}
-                onMouseEnter={() => setHovered(sector.action)}
-                onMouseLeave={() => setHovered(null)}
               />
               {/* 扇区文字沿弧排布（上半环顺时针 / 下半环翻转，见 hub-geometry）。 */}
               <text
+                className="hub-sector-label"
                 pointerEvents="none"
                 fontSize={12}
                 fontWeight={500}
-                fill={active ? '#f5f5f4' : '#e5e5e5'}
-                // 半透明扇区下垫什么内容都可能，暗影保文字对比度。
-                style={{ transition: 'fill 150ms', textShadow: '0 1px 2px rgba(0,0,0,0.55)' }}
               >
                 <textPath
                   href={`#hub-label-${sector.action}`}
@@ -259,8 +259,8 @@ export function Hub() {
                 </textPath>
               </text>
             </g>
-          )
-        })}
+          </g>
+        ))}
       </svg>
 
       {/* 解释类结果卡片：不动原文，只展示 + 复制。 */}

@@ -694,21 +694,19 @@ export function HUD() {
             也如此（大胶囊在下方居中的 session 窗，本胶囊在手指下原位不动，两窗
             同显）。 */}
         <div ref={capsuleBoxRef} className="flex shrink-0">
-          {/* 待机胶囊：小尺寸低调形态。仅作视觉主体，pointerdown / dblclick 等
+          {/* 待机胶囊：恒为圆形 mic 钮（用户拍板：不显示「按住说话」文字，
+              只保留图标圆形按钮）。仅作视觉主体，pointerdown / dblclick 等
               交互统一挂在热区盒上（见 handleIdlePointerDown 注释）。不设 title，
               避免悬停弹出原生 tooltip（aria-label 保留可访问性）。 */}
           <button
             type="button"
             className={cn(
-              'pointer-events-auto flex select-none items-center rounded-full',
+              'pointer-events-auto flex select-none items-center justify-center rounded-full',
               'bg-neutral-950/85 ring-1 ring-white/[0.06] touch-none',
-              // 形态过渡：`width: auto` 无法被 CSS 过渡插值，故宽度由可插值的
-              // padding / gap / 文字 max-width 连续驱动（≈104px ↔ 32px 平滑收放），
-              // 高度是显式类值（h-9 → h-8）可直接插值。
-              'transition-[opacity,transform,filter,padding,gap,max-width,height] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
-              // 紧凑 32×32（= 上/下吸附的可见半窗高 64/2，故上下贴边整只屏内）；
-              // 全形 h-9 ≈104×36，形态与原实现一致。
-              docked ? 'h-8 max-w-[32px] px-1.5 gap-0' : 'h-9 max-w-[240px] px-3.5 gap-2',
+              'transition-[opacity,transform,filter,width,height] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
+              // 贴边紧凑 32×32（= 上/下吸附的可见半窗高 64/2，±16 贴齐位移的基准，
+              // 故上下贴边整只屏内）；平时 36×36 圆钮，形态同为纯圆形。
+              docked ? 'h-8 w-8' : 'h-9 w-9',
               // 入场动效（位移部分在热区盒上，见盒的 cn）。
               isVisible ? 'scale-100 opacity-100 blur-0' : 'scale-95 opacity-0 blur-sm',
               // pending / holding 阶段显式收缩，提供跟手的按压反馈；dragging 已释放。
@@ -718,20 +716,6 @@ export function HUD() {
           >
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-neutral-300">
               <Mic className="h-3 w-3" />
-            </span>
-            {/* 贴边（docked）时文字收宽为 0 并淡出——仅视觉隐藏，随过渡平滑收放；
-                  可访问名称始终由按钮 `aria-label` 提供，读屏仍能读到这段文本。 */}
-            <span
-              className={cn(
-                // min-w-0：flex item 的 `min-width: auto`（内容最小宽）会顶住 max-w-0，
-                // 显式清零才能让文字真正收到 0 宽；overflow-hidden 使其成为滚动容器、
-                // 不参与可见裁剪溢出。
-                'min-w-0 overflow-hidden whitespace-nowrap text-xs font-medium text-neutral-200',
-                'transition-[max-width,opacity] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
-                docked ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100',
-              )}
-            >
-              {labelText}
             </span>
           </button>
         </div>

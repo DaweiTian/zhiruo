@@ -145,3 +145,28 @@ export function buildHubSectors(dockEdge: HubDockEdge | null): HubSector[] {
     }
   })
 }
+
+/**
+ * 按环心落位推导贴边方向：完整圆环在窗口内放不下（环心距某条窗口边不足
+ * [`RING_OUTER_R`]）时返回该边的半环朝向，放得下返回 `null`（完整圆环）。
+ *
+ * hub 窗口整只钳在屏幕工作区内、圆环按 `ringCenter` 钉在胶囊上，所以
+ * 「环心贴窗口边」== 「胶囊贴屏幕边」——不仅吸附态（config `overlayDocked`）
+ * 要半环，**接近**屏幕边缘而未吸附时同样要（全环会被窗口裁缺一角）。
+ * 多边同时放不下（角落）取最近的边；并列时按右 / 左 / 下 / 上取先者。
+ */
+export function edgeFromRingCenter(ringCenter: { x: number; y: number }): HubDockEdge | null {
+  const overflows: Array<[HubDockEdge, number]> = [
+    ['right', ringCenter.x + RING_OUTER_R - HUB_VIEW_SIZE],
+    ['left', RING_OUTER_R - ringCenter.x],
+    ['bottom', ringCenter.y + RING_OUTER_R - HUB_VIEW_SIZE],
+    ['top', RING_OUTER_R - ringCenter.y],
+  ]
+  let best: [HubDockEdge, number] | null = null
+  for (const candidate of overflows) {
+    if (candidate[1] > 0 && (best === null || candidate[1] > best[1])) {
+      best = candidate
+    }
+  }
+  return best === null ? null : best[0]
+}

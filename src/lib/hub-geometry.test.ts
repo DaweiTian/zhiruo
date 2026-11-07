@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildHubSectors,
+  edgeFromRingCenter,
   HUB_ACTIONS,
   HUB_RING_CENTER,
   HUB_VIEW_SIZE,
@@ -119,5 +120,36 @@ describe('hub ring geometry', () => {
 
   it('exposes all actions in a stable display order', () => {
     expect(HUB_ACTIONS).toEqual(['translate', 'polish', 'explain'])
+  })
+})
+
+describe('edgeFromRingCenter', () => {
+  it('returns null when the full ring fits inside the window', () => {
+    expect(edgeFromRingCenter({ x: HUB_RING_CENTER, y: HUB_RING_CENTER })).toBeNull()
+    // 环恰好与窗口边相切（溢出 0）仍算放得下。
+    expect(edgeFromRingCenter({ x: HUB_VIEW_SIZE - RING_OUTER_R, y: HUB_RING_CENTER })).toBeNull()
+    expect(edgeFromRingCenter({ x: RING_OUTER_R, y: HUB_RING_CENTER })).toBeNull()
+    expect(edgeFromRingCenter({ x: HUB_RING_CENTER, y: RING_OUTER_R })).toBeNull()
+    expect(edgeFromRingCenter({ x: HUB_RING_CENTER, y: HUB_VIEW_SIZE - RING_OUTER_R })).toBeNull()
+  })
+
+  it('picks the edge the ring center overflows past', () => {
+    expect(edgeFromRingCenter({ x: 250, y: HUB_RING_CENTER })).toBe('right')
+    expect(edgeFromRingCenter({ x: 10, y: HUB_RING_CENTER })).toBe('left')
+    expect(edgeFromRingCenter({ x: HUB_RING_CENTER, y: 10 })).toBe('top')
+    expect(edgeFromRingCenter({ x: HUB_RING_CENTER, y: 250 })).toBe('bottom')
+  })
+
+  it('near an edge but not flush still derives the half-ring', () => {
+    // 胶囊距右边缘 < RING_OUTER_R：全环会缺一角，必须转半环。
+    expect(edgeFromRingCenter({ x: 180, y: HUB_RING_CENTER })).toBe('right')
+  })
+
+  it('corner case takes the nearer edge, ties resolve deterministically', () => {
+    // 右溢出 78 > 上溢出 68 → right。
+    expect(edgeFromRingCenter({ x: 250, y: 20 })).toBe('right')
+    // 并列（各溢出 78）：按右 / 左 / 下 / 上取先者 → right。
+    expect(edgeFromRingCenter({ x: 250, y: 10 })).toBe('right')
+    expect(edgeFromRingCenter({ x: 10, y: 10 })).toBe('left')
   })
 })

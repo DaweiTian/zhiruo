@@ -6,7 +6,7 @@
 //!
 //! 窗口定位：整只窗口钳进锚点所在屏幕的工作区（[`crate::commands::OverlayFrame`]），
 //! **圆环仍锚定胶囊中心**——环心相对窗口的偏移（`ringCenter`，webview CSS px）
-//! 随 `hub-update` 载荷下发，渲染层据此平移 viewBox。贴边时窗口不再半出屏，
+//! 随 `hub-update` 载荷下发，渲染层据此偏移圆环 SVG。贴边时窗口不再半出屏，
 //! 状态文字 / 结果卡片始终完整可见（旧布局把文字裁进屏外）。
 //!
 //! 时序：右键打开 → 立刻哨兵捕获选区（`translate::capture_selection_text`，文本
@@ -48,7 +48,7 @@ fn emit_hub<R: Runtime>(app: &AppHandle<R>, payload: Value) {
     let _ = app.emit("hub-update", payload);
 }
 
-/// 环心偏移（webview CSS px）：渲染层平移 viewBox，把圆环钉在胶囊上。
+/// 环心偏移（webview CSS px）：渲染层偏移圆环 SVG，把圆环钉在胶囊上。
 fn ring_center_json() -> Value {
     let (x, y) = *HUB_RING_CENTER
         .lock()
@@ -129,7 +129,7 @@ fn place_hub_window<R: Runtime>(
         let (x, y) = frame.clamp_window(cx - frame.window_w / 2.0, cy - frame.window_h / 2.0);
         let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
         // 以实际落位为准（set_position 失败时窗口可能仍在旧位置），换算成
-        // webview CSS px（渲染层 viewBox 与 `hub-geometry.ts` 同一坐标系）。
+        // webview CSS px（圆环 SVG 与 `hub-geometry.ts` 同一坐标系）。
         if let Ok(pos) = window.outer_position() {
             let scale = if frame.window_scale > 0.0 {
                 frame.window_scale

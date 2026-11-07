@@ -67,6 +67,11 @@ export interface HubUpdatePayload {
   action?: string
   /** 胶囊贴边；`null` / 缺省 = 自由悬浮（完整圆环）。 */
   dockEdge?: OverlayEdge | null
+  /**
+   * 环心相对 hub 窗口左上角的偏移（webview CSS px）。窗口钳进工作区后
+   * 不再居中压胶囊，渲染层据此平移 viewBox 把圆环钉回胶囊中心。
+   */
+  ringCenter?: { x: number; y: number }
   /** 选区预览（ready 时携带，最多 80 字符）。 */
   preview?: string
   /** 解释类结果文本（result 时携带）。 */

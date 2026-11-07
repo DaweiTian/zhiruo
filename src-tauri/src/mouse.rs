@@ -2,7 +2,7 @@
 //! passthrough (Windows only).
 //!
 //! A dedicated background thread owns a low-level mouse hook
-//! (`SetWindowsHookExW(WH_MOUSE_LL)`) and its message pump. Two independent
+//! (`SetWindowsHookExW(WH_MOUSE_LL)`) and its message pump. Three independent
 //! consumers share it:
 //!
 //! 1. **Middle-button PTT.** `WM_MBUTTONDOWN` starts a recording session and
@@ -21,6 +21,13 @@
 //!    applies). The rect is pushed by the renderer
 //!    (`commands::set_overlay_hit_rect`); hits outside it flip the flag to
 //!    "ignore", hits inside (or an active gesture lock) flip it back.
+//! 3. **Selection-hub outside-click dismiss.** The hub (`hub.rs`) is a
+//!    non-focusable always-on-top panel, so it never receives a blur when the
+//!    user clicks another application. While a hub is open, any button press
+//!    that lands outside our own capsule windows closes it
+//!    ([`crate::hub::close_hub`]) — the standard popup-menu dismissal. The
+//!    hub's own background click already closes it in the renderer; the hook
+//!    only covers clicks that leave the hub window entirely.
 //!
 //! The hook itself is installed **whenever the process runs** (decoupled from
 //! [`ENABLED`]); the middle-button branch simply does nothing while the
@@ -458,6 +465,10 @@ mod win {
         /// (`set_ignore_cursor_events`) — the hook only decides ([`ignore_flip`])
         /// and enqueues, so mouse movement never becomes an IPC storm.
         SetIgnore { kind: CapsuleKind, ignore: bool },
+        /// A button press while the selection hub is open
+        /// ([`is_dismiss_press`]): close the hub unless it landed on our own
+        /// capsule windows. `root_hwnd` is captured in the hook like [`Down`].
+        OutsidePress { root_hwnd: isize },
     }
 
     /// Whether the stop decision came from a real button release or from the
@@ -597,6 +608,7 @@ mod win {
                 HookEvent::Up => handle_deferred_release(&mut rx).await,
                 HookEvent::Disable => handle_middle_up(StopCause::Disable),
                 HookEvent::SetIgnore { kind, ignore } => apply_ignore_cursor_events(kind, ignore),
+                HookEvent::OutsidePress { root_hwnd } => handle_outside_press(root_hwnd),
             }
         }
     }
@@ -720,6 +732,11 @@ mod win {
                 Ok(Some(HookEvent::SetIgnore { kind, ignore })) => {
                     apply_ignore_cursor_events(kind, ignore);
                 }
+                // Hub outside-click during the window: orthogonal to the button
+                // timeline, apply and keep waiting for the decisive event.
+                Ok(Some(HookEvent::OutsidePress { root_hwnd })) => {
+                    handle_outside_press(root_hwnd);
+                }
                 // Channel closed (worker shutting down): the release is moot.
                 Ok(None) => return,
                 // The window elapsed with no re-press: the release is genuine.
@@ -794,6 +811,26 @@ mod win {
                 .map(|hwnd| hwnd.0 as isize == root_hwnd)
                 .unwrap_or(false)
         })
+    }
+
+    /// Worker-side hub outside-click: close the open selection hub unless the
+    /// press landed on one of our own capsule windows (the hub's own
+    /// background click is the renderer's dismiss surface; the capsule's
+    /// right-click toggles the hub — neither may double-fire). Re-checks
+    /// [`crate::hub::is_open`] on the worker: the hub may have closed on its
+    /// own between the hook's enqueue and this decision.
+    fn handle_outside_press(root_hwnd: isize) {
+        if !crate::hub::is_open() {
+            return;
+        }
+        let Some(app) = APP.get() else {
+            return;
+        };
+        if point_over_overlay(app, root_hwnd) {
+            return;
+        }
+        log::debug!("mouse: outside click dismissing the selection hub");
+        crate::hub::close_hub(app);
     }
 
     // ---- hover passthrough -------------------------------------------------
@@ -1018,6 +1055,19 @@ mod win {
         }
     }
 
+    /// Strict whitelist for hub outside-click dismissal: the four button
+    /// **presses** and nothing else. Pure so it can be unit-tested without a
+    /// real hook. Same wheel-range trap as [`classify`] — an exact `==`
+    /// chain keeps `WM_MOUSEWHEEL` / `WM_MOUSEHWHEEL` (which sit inside
+    /// `WM_MOUSEFIRST..=WM_MOUSELAST`) inert: scrolling must never dismiss
+    /// the hub, only a deliberate press may.
+    fn is_dismiss_press(message: u32) -> bool {
+        message == WM_LBUTTONDOWN as u32
+            || message == WM_RBUTTONDOWN as u32
+            || message == WM_MBUTTONDOWN as u32
+            || message == WM_XBUTTONDOWN as u32
+    }
+
     /// `WH_MOUSE_LL` callback. Observing only: `CallNextHookEx` always runs so
     /// the click keeps its normal meaning in the target application.
     ///
@@ -1051,6 +1101,15 @@ mod win {
             // and only with local Win32 calls on this thread.
             if is_hover_update(message) {
                 evaluate_hover((info.pt.x, info.pt.y));
+            }
+            // Selection-hub outside-click dismiss: gated on the hub being open
+            // (one atomic load; ordinary clicks cost nothing). The hit test is
+            // the same local Win32 call pair the middle-button branch uses;
+            // the worker owns every Tauri call.
+            if crate::hub::is_open() && is_dismiss_press(message) {
+                post_event(HookEvent::OutsidePress {
+                    root_hwnd: root_window_at(info.pt),
+                });
             }
         }
         CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam)
@@ -1131,6 +1190,45 @@ mod win {
                     classify(message as u32),
                     None,
                     "message {message:#06x} must be inert"
+                );
+            }
+        }
+
+        /// Hub outside-click dismissal fires on the four button presses only.
+        #[test]
+        fn dismiss_press_is_button_downs_only() {
+            for message in [
+                WM_LBUTTONDOWN,
+                WM_RBUTTONDOWN,
+                WM_MBUTTONDOWN,
+                WM_XBUTTONDOWN,
+            ] {
+                assert!(
+                    is_dismiss_press(message as u32),
+                    "message {message:#06x} must dismiss the hub"
+                );
+            }
+        }
+
+        /// Regression (wheel-range trap, same as [`classify`]): scrolling must
+        /// never dismiss the hub, and a button release is not a "click
+        /// outside" either — only the press decides, so a press on the hub
+        /// itself can never be half-eaten by its own release.
+        #[test]
+        fn dismiss_ignores_wheel_moves_and_releases() {
+            for message in [
+                WM_MOUSEWHEEL,
+                WM_MOUSEHWHEEL,
+                WM_MOUSEMOVE,
+                WM_MBUTTONDBLCLK,
+                WM_LBUTTONUP,
+                WM_RBUTTONUP,
+                WM_MBUTTONUP,
+                WM_XBUTTONUP,
+            ] {
+                assert!(
+                    !is_dismiss_press(message as u32),
+                    "message {message:#06x} must not dismiss the hub"
                 );
             }
         }

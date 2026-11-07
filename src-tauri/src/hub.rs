@@ -4,11 +4,20 @@
 //! 形态：自由悬浮 = 完整圆环均分扇区围绕胶囊；贴边 = 只朝屏幕内展开半环
 //! （贴边状态读 config `app.overlayDocked`，扇形几何在渲染层 `hub-geometry.ts`）。
 //!
+//! 窗口定位：整只窗口钳进锚点所在屏幕的工作区（[`crate::commands::OverlayFrame`]），
+//! **圆环仍锚定胶囊中心**——环心相对窗口的偏移（`ringCenter`，webview CSS px）
+//! 随 `hub-update` 载荷下发，渲染层据此平移 viewBox。贴边时窗口不再半出屏，
+//! 状态文字 / 结果卡片始终完整可见（旧布局把文字裁进屏外）。
+//!
 //! 时序：右键打开 → 立刻哨兵捕获选区（`translate::capture_selection_text`，文本
 //! 暂存 [`HUB_SELECTION`]）→ 动作点击后走 `translate::run_with_text` 输出。
 //! 捕获放在打开时而不是点击时，是为了当场给出「未检测到选区」提示与选区预览；
 //! 改写类输出前 `run_with_text` 会复查选区未变，选区漂移绝不误替换。
 //! 捕获与动作都持有 `translate::BusyGuard`，与翻译快捷键共用同一把互斥。
+//!
+//! 收起路径：结果卡片关闭按钮 / 面板背景点击（渲染层）、替换成功后的延时收起、
+//! 以及 Windows `mouse.rs` 全局鼠标钩子的「点外收起」（任意按键落在 hub /
+//! 胶囊窗口之外即 [`close_hub`]；hub 非激活窗口收不到 blur，只能靠钩子）。
 //!
 //! 窗口生命周期归 `windowing`（[`windowing::ensure_hub_window`]）；本模块只做
 //! 编排与 `hub-update` 事件。失败路径一律 emit 可见中文提示，不静默吞错。
@@ -26,14 +35,30 @@ pub const HUB_WINDOW_SIZE: f64 = 260.0;
 /// 替换成功后「已替换」提示的停留时长，随后自动收起 hub。
 const DONE_FLASH_MS: u64 = 900;
 
+/// 环心默认值 = 窗口正中（窗口无偏移摆位时渲染层的原点约定）。
+const RING_CENTER_DEFAULT: (f64, f64) = (HUB_WINDOW_SIZE / 2.0, HUB_WINDOW_SIZE / 2.0);
+
 static HUB_OPEN: AtomicBool = AtomicBool::new(false);
 static HUB_SELECTION: Mutex<Option<String>> = Mutex::new(None);
+/// 环心相对 hub 窗口左上角的偏移（webview CSS px），每次 [`open_hub`] 落位后写入。
+static HUB_RING_CENTER: Mutex<(f64, f64)> = Mutex::new(RING_CENTER_DEFAULT);
 
 /// `hub-update` 事件载荷统一出口（hub 窗口渲染层监听）。
 fn emit_hub<R: Runtime>(app: &AppHandle<R>, payload: Value) {
     let _ = app.emit("hub-update", payload);
 }
 
+/// 环心偏移（webview CSS px）：渲染层平移 viewBox，把圆环钉在胶囊上。
+fn ring_center_json() -> Value {
+    let (x, y) = *HUB_RING_CENTER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    json!({ "x": x, "y": y })
+}
+
+/// 状态载荷出口：除调用方给的字段外，**每条载荷**都补上 `dockEdge` 与
+/// `ringCenter`。动作中段（processing / done / result）也不能丢几何——
+/// 渲染层据此重建扇区与偏移，缺字段会让贴边圆环闪回全环。
 fn hub_status<R: Runtime>(app: &AppHandle<R>, status: &str, extra: Value) {
     let mut payload = json!({ "status": status });
     if let Some(obj) = payload.as_object_mut() {
@@ -42,6 +67,8 @@ fn hub_status<R: Runtime>(app: &AppHandle<R>, status: &str, extra: Value) {
                 obj.insert(k.clone(), v.clone());
             }
         }
+        obj.insert("dockEdge".into(), dock_edge_json(app));
+        obj.insert("ringCenter".into(), ring_center_json());
     }
     emit_hub(app, payload);
 }
@@ -52,7 +79,8 @@ fn lock_hub_selection() -> std::sync::MutexGuard<'static, Option<String>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn is_open() -> bool {
+/// hub 当前是否开着（`mouse.rs` 点外收起钩子据此门禁；只读原子量）。
+pub(crate) fn is_open() -> bool {
     HUB_OPEN.load(Ordering::SeqCst)
 }
 
@@ -67,9 +95,8 @@ fn dock_edge_json<R: Runtime>(app: &AppHandle<R>) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// hub 窗口定位：把窗口中心压在可见胶囊中心（渲染层测量的物理像素锚点）。
-/// 贴边时胶囊中线就在屏幕边上，窗口随之半出屏——半环只朝屏幕内展开，
-/// 屏外一半是透明区，无需额外钳制。锚点缺失时退回 overlay 窗口中心。
+/// hub 锚点：可见胶囊中心（渲染层测量的物理像素锚点）。锚点缺失时退回
+/// overlay 窗口中心。命令边界不可信：非有限值一律丢弃，回退默认。
 fn anchor_center<R: Runtime>(app: &AppHandle<R>, center: Option<(f64, f64)>) -> Option<(f64, f64)> {
     if let Some((x, y)) = center {
         if x.is_finite() && y.is_finite() {
@@ -83,6 +110,42 @@ fn anchor_center<R: Runtime>(app: &AppHandle<R>, center: Option<(f64, f64)>) -> 
         pos.x as f64 + size.width as f64 / 2.0,
         pos.y as f64 + size.height as f64 / 2.0,
     ))
+}
+
+/// 把 hub 窗口摆到锚点上并记录环心偏移：
+/// - 首选整窗钳进锚点所在屏幕的工作区（[`crate::commands::OverlayFrame`]），
+///   状态文字 / 结果卡片因此永远完整可见；圆环不跟随窗口移动——环心偏移
+///   （`ringCenter`）随 `hub-update` 下发，渲染层把圆环钉回胶囊中心；
+/// - 找不到显示器（几何兜底失败）时退回旧行为：窗口中心压锚点，
+///   环心即窗口正中（[`RING_CENTER_DEFAULT`]）。
+fn place_hub_window<R: Runtime>(
+    app: &AppHandle<R>,
+    window: &tauri::WebviewWindow<R>,
+    anchor: (f64, f64),
+) {
+    let (cx, cy) = anchor;
+    let mut ring_center = RING_CENTER_DEFAULT;
+    if let Some(frame) = crate::commands::OverlayFrame::resolve(app, window, cx, cy) {
+        let (x, y) = frame.clamp_window(cx - frame.window_w / 2.0, cy - frame.window_h / 2.0);
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+        // 以实际落位为准（set_position 失败时窗口可能仍在旧位置），换算成
+        // webview CSS px（渲染层 viewBox 与 `hub-geometry.ts` 同一坐标系）。
+        if let Ok(pos) = window.outer_position() {
+            let scale = if frame.window_scale > 0.0 {
+                frame.window_scale
+            } else {
+                1.0
+            };
+            ring_center = ((cx - pos.x as f64) / scale, (cy - pos.y as f64) / scale);
+        }
+    } else if let Ok(size) = window.outer_size() {
+        let x = cx - size.width as f64 / 2.0;
+        let y = cy - size.height as f64 / 2.0;
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+    *HUB_RING_CENTER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = ring_center;
 }
 
 /// 右键胶囊入口：已开则收起（toggle）；未开则定位显示 hub 并捕获选区。
@@ -101,12 +164,8 @@ pub async fn open_hub<R: Runtime>(app: &AppHandle<R>, center: Option<(f64, f64)>
         return;
     };
 
-    if let Some((cx, cy)) = anchor_center(app, center) {
-        if let Ok(size) = window.outer_size() {
-            let x = cx - size.width as f64 / 2.0;
-            let y = cy - size.height as f64 / 2.0;
-            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-        }
+    if let Some(anchor) = anchor_center(app, center) {
+        place_hub_window(app, &window, anchor);
     }
     crate::windowing::harden_overlay_window(&window);
     if let Err(e) = window.show() {
@@ -116,15 +175,14 @@ pub async fn open_hub<R: Runtime>(app: &AppHandle<R>, center: Option<(f64, f64)>
     HUB_OPEN.store(true, Ordering::SeqCst);
     *lock_hub_selection() = None;
 
-    let dock_edge = dock_edge_json(app);
-    hub_status(app, "capturing", json!({ "dockEdge": dock_edge }));
+    hub_status(app, "capturing", json!({}));
 
     // 捕获与翻译快捷键互斥：拿不到锁就明说，不排队插队。
     let Some(_busy) = BusyGuard::acquire() else {
         hub_status(
             app,
             "error",
-            json!({ "message": "有其他选区任务正在进行，请稍后再试。", "dockEdge": dock_edge_json(app) }),
+            json!({ "message": "有其他选区任务正在进行，请稍后再试。" }),
         );
         return;
     };
@@ -143,21 +201,13 @@ pub async fn open_hub<R: Runtime>(app: &AppHandle<R>, center: Option<(f64, f64)>
             log::info!("hub: captured selection ({} chars)", text.chars().count());
             let preview: String = text.chars().take(80).collect();
             *lock_hub_selection() = Some(text);
-            hub_status(
-                app,
-                "ready",
-                json!({ "preview": preview, "dockEdge": dock_edge_json(app) }),
-            );
+            hub_status(app, "ready", json!({ "preview": preview }));
         }
         Ok(None) => {
-            hub_status(app, "empty", json!({ "dockEdge": dock_edge_json(app) }));
+            hub_status(app, "empty", json!({}));
         }
         Err(message) => {
-            hub_status(
-                app,
-                "error",
-                json!({ "message": message, "dockEdge": dock_edge_json(app) }),
-            );
+            hub_status(app, "error", json!({ "message": message }));
         }
     }
 }

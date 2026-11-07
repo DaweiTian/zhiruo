@@ -56,6 +56,10 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 **视觉描边**：待机胶囊本体已去除 `border border-white/10` 矩形描边，改为极淡的 `ring-1 ring-white/[0.06]` 配合原有阴影，在浅色背景下维持轮廓但不再呈现明显矩形边框。会话胶囊与其状态圆章（ProcessingBadge / SuccessBadge / ErrorBadge）的 ring / border 保留，用于小面积语义区分。
 
+### `Hub.tsx`
+
+`hub` 窗口（`App.tsx` 按 window label 路由）的**选区快捷动作面板**：右键常驻胶囊弹出的圆环动作面板（翻译 / 润色 / 解释三扇区，几何见 `lib/hub-geometry.ts`）。**窗体透明**（`html.overlay-html` 撤掉 body 主题底色）：只画半透明圆弧扇区（下方内容透得出来）与其上的浮动信息，不压纯色黑底；WebView2 默认右键菜单（黑底矩形面板）被抑制，右键 = 收起。窗口整只钳在屏幕工作区内、圆环不居中——`hub-update` 载荷里的 `ringCenter`（环心相对窗口的 CSS px 偏移）平移 viewBox 把圆环钉回胶囊中心（贴边时半环按 `dockEdge` 朝屏幕内展开）；状态文字 / 选区预览 / 结果卡片因此贴边也**完整可见**，环心偏上时文字翻到窗口下半、长文案换行不截断。状态流由 Rust `hub-update` 驱动（capturing → ready / empty / error → processing → done / result）；仅 ready 态扇区可点。收起路径：点扇区外任意处（含右键）、结果卡片关闭按钮、替换成功后的延时收起、以及 Windows `mouse.rs` 全局钩子的点外点击收起（hub 非激活窗口收不到 blur）。
+
 ### `SessionHUD.tsx`
 
 `session` 窗口（`App.tsx` 按 window label 路由）的**会话态胶囊**：0.5.6 与 overlay 待机胶囊解耦，固定渲染在屏幕下方居中的独立透明窗口里。承载录音（268×52 深色玻璃胶囊：琥珀麦克风呼吸圆章 + 无流式文本时的迷你波形 / 流式文本单行截断 + 尾部弱化 + 流光光标）、处理（阶段色转圈圆章：转写 / 精修 / 翻译）、成功（绿勾 + 转写预览）、错误（红叉 + 错误文案）与取消按钮。视觉 / 交互与拆分前 overlay 会话态胶囊基本一致，并补了内容层动效：session 窗 show 时大胶囊从 `opacity-0 scale-[0.93] translate-y-1.5` 淡入 / 微升（200ms、约 75ms 延迟起步，幅度被 280×64 窗口余量钳制），`recording` / `processing` / `success` / `error` 状态圆章切换时统一套用 `hud-pop` 弹性出现，与成功 / 错误态原有动画保持家族一致。

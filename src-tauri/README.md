@@ -343,7 +343,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   录制态双守卫，触发时 spawn `translate::translate_selection`（不再向渲染层
   emit 无任何监听者的 `translate` 事件）。
   `main_window_focused` 为 `pub`，供 `mouse.rs` 中键守卫只读复用（逻辑不变）。
-- `src/mouse.rs` - Windows 鼠标钩子（仅 Windows）：中键 PTT **与** 胶囊 hover 穿透共用一个
+- `src/mouse.rs` - Windows 鼠标钩子（仅 Windows）：中键 PTT、胶囊 hover 穿透**与**
+  选区 hub 点外收起共用一个
   常驻 `SetWindowsHookExW(WH_MOUSE_LL)` 钩子（独立后台线程跑消息循环）。
   **hover 穿透（0.5.15）**：HUD / session 窗是 280×64 透明窗、可见胶囊只占一部分，
   其余必须让点击 / 滚轮穿透到下层应用（缺陷：贴边后屏内 ~3cm 透明条带吞滚动条、
@@ -390,7 +391,14 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   root hwnd 与 overlay / hub 窗口比对）跳过（归悬浮胶囊处理、hub 无中键语义）。
   `mouse.middleClickPtt`（默认 false）即时
   门控中键分支（线程安全；禁用时补发一次 stop 决策防孤儿录音；钩子本体常驻不卸载，
-  hover 穿透继续生效）；非 Windows 为 no-op stub。
+  hover 穿透继续生效）。
+  **hub 点外收起（T3）**：hub 打开期间任意按钮**按下**（严格 `==` 白名单
+  `is_dismiss_press`：四类 DOWN，滚轮 / 抬起 / 移动同样排除）落在 overlay / hub
+  窗口之外即 `hub::close_hub`（弹出面板的标准点外收起；hub 非激活窗口收不到 blur，
+  只能靠钩子）。钩子只做 `is_open()` 原子量门禁 + 本地 Win32 命中检测并入队
+  （`OutsidePress`），worker 上复核 `is_open` 与 root hwnd 后再收起——右键开 hub
+  的那次按下发生在开窗之前，天然不误收；hub 窗内背景点击仍归渲染层 `Hub.tsx`。
+  非 Windows 为 no-op stub（点外收起仅窗内背景点击生效）。
 - `src/translate.rs` - **选区动作编排**（翻译快捷键与选区 hub 共用；移植自遗留 Electron
   蓝本 `electron/main/translation/translator.ts`）：剪贴板快照 → 模拟 Ctrl+C +
   哨兵写入/超时轮询读取判定选区 → LLM 处理（[`SelectionAction`]：翻译 /
@@ -412,10 +420,16 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
 - `src/hub.rs` - 选区快捷动作 hub 编排（右键常驻胶囊唤出的圆环动作面板）：
   打开即哨兵捕获选区（`translate::capture_selection_text`，文本暂存供动作点击
   使用）、`hub-update` 事件状态流（capturing → ready / empty → processing →
-  done / result / error）、动作执行复用 `translate::run_with_text`（与翻译快捷键
-  共用 `BusyGuard` 互斥）。窗口定位 = 可见胶囊中心（渲染层测量的物理像素锚点）
-  压 hub 窗口中点，贴边时半出屏、半环由渲染层按 `app.overlayDocked` 朝屏幕内
+  done / result / error；**每条载荷统一带 `dockEdge` 与 `ringCenter`**，动作中段
+  丢几何会让贴边圆环闪回全环）、动作执行复用 `translate::run_with_text`（与翻译
+  快捷键共用 `BusyGuard` 互斥）。窗口定位 = 可见胶囊中心（渲染层测量的物理像素
+  锚点）压 hub 窗口中点后**整窗钳进锚点所在屏幕的工作区**（`commands::OverlayFrame`，
+  贴边不再半出屏，状态文字 / 结果卡片始终完整可见）；圆环不跟随窗口——环心偏移
+  `ringCenter`（webview CSS px，set_position 后按实际落位换算）随载荷下发，
+  渲染层平移 viewBox 把圆环钉回胶囊中心，半环按 `app.overlayDocked` 朝屏幕内
   展开；窗口生命周期归 `windowing::ensure_hub_window`（隐藏 / 重建，绝不销毁）。
+  收起 = 渲染层背景点击 / 右键、结果卡片关闭按钮、替换成功延时收起、Windows
+  `mouse.rs` 点外收起（`is_open` 供其门禁）。
 - `src/config.rs` - 配置存储（`voice-key-config.json`）。**配置写入线程安全**：
   所有写入口（`merge`：`set_config` 及其快捷键回滚、`test_refine_connection`、
   `set_app_language`、overlay 显隐 flag / 拖拽位置持久化）的

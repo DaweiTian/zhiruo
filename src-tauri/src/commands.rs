@@ -122,22 +122,29 @@ fn monitor_work_area(monitor: &Monitor) -> (f64, f64, f64, f64) {
 /// Geometry snapshot for placing the HUD on the monitor that owns a physical
 /// desktop point. All values are physical (device) pixels taken from the *same*
 /// monitor, so the math is multi-monitor and DPI safe.
-struct OverlayFrame {
+///
+/// `pub(crate)`: `hub::open_hub` reuses [`OverlayFrame::resolve`] /
+/// [`OverlayFrame::clamp_window`] to keep the hub window inside the same work
+/// area while its ring stays anchored on the capsule.
+pub(crate) struct OverlayFrame {
     area_x: f64,
     area_y: f64,
     area_w: f64,
     area_h: f64,
-    window_w: f64,
-    window_h: f64,
+    /// Physical px, see [`OverlayFrame::resolve`].
+    pub(crate) window_w: f64,
+    /// Physical px, see [`OverlayFrame::resolve`].
+    pub(crate) window_h: f64,
     monitor_scale: f64,
-    window_scale: f64,
+    /// The owning window's own scale: physical px / this = webview CSS px.
+    pub(crate) window_scale: f64,
 }
 
 impl OverlayFrame {
     /// Resolve the work area and window size on the monitor containing
     /// `(x, y)` (falling back to the window's current monitor, then the
     /// primary monitor). `None` when the platform reports no monitor at all.
-    fn resolve<R: tauri::Runtime>(
+    pub(crate) fn resolve<R: tauri::Runtime>(
         app: &AppHandle<R>,
         win: &WebviewWindow<R>,
         x: f64,
@@ -204,7 +211,7 @@ impl OverlayFrame {
     /// default): keep the whole window inside the work area, so the default /
     /// reset placement is always fully visible. An oversized window degrades
     /// to anchored at the area origin.
-    fn clamp_window(&self, x: f64, y: f64) -> (f64, f64) {
+    pub(crate) fn clamp_window(&self, x: f64, y: f64) -> (f64, f64) {
         (
             x.clamp(
                 self.area_x,

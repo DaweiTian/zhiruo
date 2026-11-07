@@ -776,3 +776,26 @@ html.vk-theme-changing *::after {
     animation: none;
   }
 }
+
+/* hub 圆环扇区展开：从胶囊中心弧形扫出（缩放 + 轻微反向旋转），逐扇错峰。 */
+.hub-sector-in {
+  transform-box: view-box;
+  transform-origin: 130px 130px;
+  animation: hub-sector-in 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes hub-sector-in {
+  from {
+    transform: scale(0.25) rotate(-14deg);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-sector-in {
+    animation: none;
+  }
+}

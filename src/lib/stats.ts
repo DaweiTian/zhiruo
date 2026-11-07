@@ -3,6 +3,8 @@ export interface HistoryItem {
   text: string
   timestamp: number
   duration?: number
+  /** `selection` = 选区动作替换前的原文快照（可回溯）；缺省 = 语音听写。 */
+  source?: string
 }
 
 export interface DictationStats {

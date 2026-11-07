@@ -776,18 +776,24 @@ mod win {
     }
 
     /// True when the given root window (top-level window under the cursor at
-    /// event time) is the HUD overlay. The hit test itself ran in the hook
-    /// with pure Win32 calls; only this comparison needs Tauri (overlay
-    /// `hwnd`), so it happens here on the worker. A hidden capsule can never
-    /// match: a hidden window is not the root window under the cursor.
+    /// event time) is one of our interactive capsules: the HUD overlay or the
+    /// selection hub. The hit test itself ran in the hook with pure Win32
+    /// calls; only this comparison needs Tauri (window `hwnd`s), so it happens
+    /// here on the worker. A hidden window can never match: a hidden window is
+    /// not the root window under the cursor.
     fn point_over_overlay(app: &AppHandle, root_hwnd: isize) -> bool {
-        let Some(win) = app.get_webview_window(crate::windowing::OVERLAY_WINDOW_LABEL) else {
-            return false;
-        };
-        // `hwnd.0` is the raw pointer windows-sys expects (see windowing.rs).
-        win.hwnd()
-            .map(|hwnd| hwnd.0 as isize == root_hwnd)
-            .unwrap_or(false)
+        [
+            crate::windowing::OVERLAY_WINDOW_LABEL,
+            crate::windowing::HUB_WINDOW_LABEL,
+        ]
+        .iter()
+        .any(|label| {
+            app.get_webview_window(label)
+                // `hwnd.0` is the raw pointer windows-sys expects (see windowing.rs).
+                .and_then(|win| win.hwnd().ok())
+                .map(|hwnd| hwnd.0 as isize == root_hwnd)
+                .unwrap_or(false)
+        })
     }
 
     // ---- hover passthrough -------------------------------------------------

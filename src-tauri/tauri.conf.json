@@ -57,6 +57,22 @@
         "visible": false
       },
       {
+        "label": "hub",
+        "title": "芷若",
+        "width": 260,
+        "height": 260,
+        "resizable": false,
+        "decorations": false,
+        "shadow": false,
+        "transparent": true,
+        "noRedirectionBitmap": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": false,
+        "visible": false
+      },
+      {
         "label": "background",
         "title": "芷若",
         "width": 320,

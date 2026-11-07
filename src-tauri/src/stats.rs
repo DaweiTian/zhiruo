@@ -270,6 +270,7 @@ mod tests {
             timestamp,
             text: text.into(),
             duration,
+            source: None,
         }
     }
 

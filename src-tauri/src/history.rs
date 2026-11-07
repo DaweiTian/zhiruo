@@ -15,6 +15,11 @@ pub struct HistoryItem {
     /// deserialize to `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<u64>,
+    /// 来源标记：`None` = 语音听写（历史默认形态）；`Some("selection")` =
+    /// 选区动作替换前的原文快照（改写类动作覆盖选区后可在此回溯）。
+    /// 旧记录缺键，反序列化为 `None`，前端按语音听写展示。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -74,6 +79,24 @@ impl HistoryManager {
             timestamp: now_ms(),
             text,
             duration: duration_ms,
+            source: None,
+        };
+        store.items.insert(0, item.clone());
+        store.items = Self::prune(store.items);
+        Self::save(&store)?;
+        Ok(item)
+    }
+
+    /// 选区动作（翻译 / 润色改写）在覆盖选区前，把**原文**存进历史，
+    /// 供替换后回溯。带 `source = "selection"` 与语音听写条目区分。
+    pub fn add_selection_original(text: String) -> Result<HistoryItem, String> {
+        let mut store = Self::load();
+        let item = HistoryItem {
+            id: format!("{}-{}", now_ms(), uuid::Uuid::new_v4().simple()),
+            timestamp: now_ms(),
+            text,
+            duration: None,
+            source: Some("selection".to_string()),
         };
         store.items.insert(0, item.clone());
         store.items = Self::prune(store.items);
@@ -108,6 +131,7 @@ mod tests {
             timestamp: 0,
             text: "hello".into(),
             duration: Some(1500),
+            source: None,
         };
         let json = serde_json::to_value(&item).expect("serialize");
         // Frontend reads `item.duration` in milliseconds; must NOT be durationMs.
@@ -129,6 +153,7 @@ mod tests {
             timestamp: 0,
             text: "hello".into(),
             duration: None,
+            source: None,
         };
         let json = serde_json::to_value(&item).expect("serialize");
         assert!(json.get("duration").is_none());

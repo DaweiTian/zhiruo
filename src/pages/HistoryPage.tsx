@@ -389,6 +389,7 @@ export default function HistoryPage() {
                       onDelete={deleteItem}
                       copyTitle={t('history.copyTitle')}
                       deleteTitle={t('history.deleteTitle')}
+                      selectionLabel={t('history.selectionOriginal')}
                       secondsLabel={formatSecondsLabel}
                       charUnit={t('home.charUnit')}
                     />
@@ -437,6 +438,7 @@ interface HistoryRowProps {
   onDelete: (id: string) => void
   copyTitle: string
   deleteTitle: string
+  selectionLabel: string
   secondsLabel: (count: number) => string
   charUnit: string
 }
@@ -453,12 +455,15 @@ const HistoryRow = React.memo(
     onDelete,
     copyTitle,
     deleteTitle,
+    selectionLabel,
     secondsLabel,
     charUnit,
   }: HistoryRowProps) => {
     const handleSelect = React.useCallback(() => onSelect(item.id), [item.id, onSelect])
     const handleCopy = React.useCallback(() => onCopy(item.text), [item.text, onCopy])
     const handleDelete = React.useCallback(() => onDelete(item.id), [item.id, onDelete])
+    // 选区动作替换前的原文快照：无录音时长，时长 chip 换成来源徽标。
+    const isSelection = item.source === 'selection'
 
     return (
       <div
@@ -472,7 +477,11 @@ const HistoryRow = React.memo(
         )}
       >
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-accent text-accent-foreground">
-          <Mic className="h-[17px] w-[17px]" />
+          {isSelection ? (
+            <Type className="h-[17px] w-[17px]" />
+          ) : (
+            <Mic className="h-[17px] w-[17px]" />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <p className="line-clamp-2 text-[13.5px] leading-relaxed text-foreground">{item.text}</p>
@@ -481,12 +490,19 @@ const HistoryRow = React.memo(
               <Clock className="h-3 w-3" />
               {time}
             </span>
-            <span className="tnum inline-flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5">
-              <span className="h-3 w-6 text-primary">
-                <VoiceWave bars={7} active={false} />
+            {isSelection ? (
+              <span className="tnum inline-flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5">
+                <Type className="h-3 w-3" />
+                {selectionLabel}
               </span>
-              {secondsLabel(seconds)}
-            </span>
+            ) : (
+              <span className="tnum inline-flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5">
+                <span className="h-3 w-6 text-primary">
+                  <VoiceWave bars={7} active={false} />
+                </span>
+                {secondsLabel(seconds)}
+              </span>
+            )}
             <span className="tnum inline-flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5">
               <Type className="h-3 w-3" />
               {charLabel} {charUnit}
@@ -553,6 +569,8 @@ function DetailPane({
   const seconds = Math.max(1, Math.round((item.duration ?? 0) / 1000))
   const chars = countCharacters(item.text)
   const cpm = Math.round(chars / (seconds / 60))
+  // 选区原文：无录音时长 / 语速，展示来源徽标代替。
+  const isSelection = item.source === 'selection'
 
   return (
     <div className="sticky top-0 flex max-h-[600px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
@@ -570,11 +588,24 @@ function DetailPane({
       <div className="vk-scroll overflow-y-auto px-5 py-4">
         <p className="text-sm leading-[1.8] text-foreground">{item.text}</p>
       </div>
-      <div className="grid grid-cols-3 gap-2 px-5 pb-4">
-        <DetailStat value={formatNumber(chars)} label={t('history.detail.chars')} />
-        <DetailStat value={`${seconds}s`} label={t('history.detail.duration')} />
-        <DetailStat value={formatNumber(cpm)} label={t('history.detail.speed')} />
-      </div>
+      {isSelection ? (
+        <div className="flex items-center gap-2 px-5 pb-4 text-[11px] text-muted-foreground">
+          <span className="tnum inline-flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5">
+            <Type className="h-3 w-3" />
+            {t('history.selectionOriginal')}
+          </span>
+          <span className="tnum inline-flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5">
+            <Type className="h-3 w-3" />
+            {formatNumber(chars)} {t('home.charUnit')}
+          </span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 px-5 pb-4">
+          <DetailStat value={formatNumber(chars)} label={t('history.detail.chars')} />
+          <DetailStat value={`${seconds}s`} label={t('history.detail.duration')} />
+          <DetailStat value={formatNumber(cpm)} label={t('history.detail.speed')} />
+        </div>
+      )}
       <div className="flex items-center gap-2 border-t px-5 py-3.5">
         <Button className="flex-1" size="sm" onClick={() => onCopy(item.text)}>
           <Copy className="h-4 w-4" />

@@ -60,6 +60,21 @@ export interface SetConfigResult {
   hotkeyRolledBack: boolean
 }
 
+/** `hub-update` 事件载荷（Rust `hub::emit_hub`，选区快捷动作面板状态流）。 */
+export interface HubUpdatePayload {
+  status: 'capturing' | 'empty' | 'ready' | 'processing' | 'done' | 'result' | 'error'
+  /** 当前动作 id（processing / done / result 时携带）：`translate` / `polish` / `explain`。 */
+  action?: string
+  /** 胶囊贴边；`null` / 缺省 = 自由悬浮（完整圆环）。 */
+  dockEdge?: OverlayEdge | null
+  /** 选区预览（ready 时携带，最多 80 字符）。 */
+  preview?: string
+  /** 解释类结果文本（result 时携带）。 */
+  result?: string
+  /** 失败提示（error 时携带）。 */
+  message?: string
+}
+
 type Unsub = () => void
 
 function detectPlatform(): string {
@@ -228,6 +243,19 @@ export const tauriApi = {
   refineText: (text: string) => invoke<string>('refine_text', { text }),
   translateText: (text: string, targetLanguage: string) =>
     invoke<string>('translate_text', { text, targetLanguage }),
+
+  // Selection quick-action hub (right-click on the resident capsule).
+  // `center` = 可见胶囊中心（物理像素，渲染层测量）；缺省时 Rust 回退
+  // overlay 窗口中心。
+  openSelectionHub: (center?: { x: number; y: number }) =>
+    invoke('open_selection_hub', {
+      centerX: center?.x ?? null,
+      centerY: center?.y ?? null,
+    }),
+  closeSelectionHub: () => invoke('close_selection_hub'),
+  runSelectionHubAction: (action: string) => invoke('run_selection_hub_action', { action }),
+  copyText: (text: string) => invoke('copy_text', { text }),
+  onHubUpdate: (cb: (payload: HubUpdatePayload) => void): Unsub => listenAsync('hub-update', cb),
 }
 
 export type ElectronAPI = typeof tauriApi

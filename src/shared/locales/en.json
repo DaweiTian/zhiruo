@@ -372,6 +372,7 @@
   "history": {
     "title": "History",
     "eyebrow": "Dictation history",
+    "selectionOriginal": "Selection original",
     "clearTitle": "Clear all",
     "groupCount_one": "{{formattedCount}} item",
     "groupCount_other": "{{formattedCount}} items",
@@ -428,6 +429,20 @@
     "injected": "Injected",
     "error": "Error",
     "errorFallback": "Something went wrong"
+  },
+  "hub": {
+    "translate": "Translate",
+    "polish": "Polish",
+    "explain": "Explain",
+    "capturing": "Reading selection…",
+    "noSelection": "No text selected",
+    "processing": "Working…",
+    "done": "Replaced",
+    "explainTitle": "Explanation",
+    "copy": "Copy",
+    "copied": "Copied",
+    "close": "Close",
+    "error": "Failed"
   },
   "tray": {
     "settings": "Settings",

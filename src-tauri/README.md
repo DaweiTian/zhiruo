@@ -182,7 +182,10 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   窗，`tauri.conf.json` 参数与 overlay 条目完全同源、共用 `harden_overlay_window`
   全套硬化）的同款兜底重建：会话窗正常只 hide/show，真被销毁后由会话启动路径在
   工作线程按 `session` 条目同形重建，保证「会话启动总能让下方居中胶囊出现」。
-  `harden_app_windows` 的 label 分支同步覆盖 session（→ `harden_overlay_window`）。
+  `ensure_hub_window` 是选区快捷动作 hub 窗（`hub` 条目，260×260 正方形、其余
+  同源同硬化）的同款兜底重建：hub 正常只 hide/show（`hub::close_hub`），
+  CloseRequested 转隐藏、绝不销毁。
+  `harden_app_windows` 的 label 分支同步覆盖 session 与 hub（→ `harden_overlay_window`）。
 - `src/tray.rs` - **唯一**托盘来源（`tauri.conf.json` 不再配置 `app.trayIcon`，
   否则会出现两个图标）。右键菜单：Open Zhiruo / Settings / Launch at login
   （可勾选，纯 Rust 侧 enable/disable 并同步勾选态）/ Show floating capsule
@@ -315,6 +318,10 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
     dirty），并即时应用 `mouse.middleClickPtt`（`mouse.rs` 中键分支门控；钩子本体
     常驻，hover 穿透不受影响）；
     `set_hotkey_capture_active` 维护快捷键录制态守卫。
+    **选区快捷动作 hub 命令**：`open_selection_hub`（右键胶囊 toggle 打开/收起，
+    附可见胶囊中心物理像素锚点，invoke 边界校验有限性）、`close_selection_hub`、
+    `run_selection_hub_action`（action ∈ translate/polish/explain）、`copy_text`
+    （结果卡片显式复制，写剪贴板不还原）。
 - `src/stats.rs` - 独立累计统计存储（`voice-key-stats.json`）：识别字符总数 /
   录音总时长 / 按日统计（`sessions` / `characters` / `audioMs`）只增不减，不受
   历史删除与 90 天裁剪影响——Home 的今日与近 N 日窗口也改读它（前端按日历日
@@ -379,25 +386,36 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   并清 token，其余启动/停止/取消/出错路径也清 token（`clear_owned_session`），
   保证松中键永不误杀键盘 PTT / HUD 启动的会话、也不产生虚假错误 toast；快速
   click（down 紧接 up）因串行处理天然不留孤儿录音。守卫与键盘 PTT 一致（主窗口
-  聚焦 / 快捷键录制态不触发）；落在 HUD 胶囊上的中键（钩子内记下的 root hwnd 与
-  overlay 比对）跳过（归悬浮胶囊处理）。`mouse.middleClickPtt`（默认 false）即时
+  聚焦 / 快捷键录制态不触发）；落在 HUD 胶囊或选区 hub 上的中键（钩子内记下的
+  root hwnd 与 overlay / hub 窗口比对）跳过（归悬浮胶囊处理、hub 无中键语义）。
+  `mouse.middleClickPtt`（默认 false）即时
   门控中键分支（线程安全；禁用时补发一次 stop 决策防孤儿录音；钩子本体常驻不卸载，
   hover 穿透继续生效）；非 Windows 为 no-op stub。
-- `src/translate.rs` - 选中文字翻译编排（翻译快捷键触发，移植自遗留 Electron 蓝本
-  `electron/main/translation/translator.ts`）：剪贴板快照 → 模拟 Ctrl+C +
-  哨兵写入/超时轮询读取判定选区 → `llm::translate_text` → 粘贴前复查选区未变 →
-  译文入剪贴板 + 模拟粘贴覆盖选区。`ClipboardGuard` 在 Drop 中处理原剪贴板
+- `src/translate.rs` - **选区动作编排**（翻译快捷键与选区 hub 共用；移植自遗留 Electron
+  蓝本 `electron/main/translation/translator.ts`）：剪贴板快照 → 模拟 Ctrl+C +
+  哨兵写入/超时轮询读取判定选区 → LLM 处理（[`SelectionAction`]：翻译 /
+  润色改写 / 解释说明，见 `llm.rs` 对应调用）→ 输出（改写类粘贴前复查选区未变 →
+  译文入剪贴板 + 模拟粘贴覆盖选区、原文经 `HistoryManager::add_selection_original`
+  进历史可回溯；解释类只返回文本不碰原文）。
+  `ClipboardGuard` 在 Drop 中处理原剪贴板
   （成功 / 失败 / 提前返回全覆盖，绝不泄漏哨兵或译文；仅恢复纯文本，取舍见模块
   头注释）。剪贴板快照是三态的（`Text` / `Empty` / `Unreadable`）：初始读取失败
   与"无文本"严格区分，`Unreadable` 时**跳过恢复**（绝不覆写从未快照到的用户内容，
   只清理我们自己的哨兵/译文残留）并记日志。未启用翻译 / LLM 配置不完整 / 未选中
   文字 / LLM 失败 / 译文为空 /
   选区变化 / 粘贴失败均 emit `error` 事件（设置窗口 toast）+ HUD 胶囊可见提示；
-  `llm::connection_ready` 预检在任何剪贴板副作用之前；`TRANSLATING` 原子标志防
-  重入（RAII guard 在 Drop 内复位，panic / 提前返回都不会卡在"翻译中"），全流程
-  spawn 到 async runtime 执行，不阻塞快捷键回调；反馈后 1.2s 回 idle 复用
-  `commands::overlay_idle_later`；Hyprland 会话剪贴板
+  `llm::connection_ready` 预检在任何剪贴板副作用之前；`SELECTION_BUSY` 原子标志 +
+  `BusyGuard` 防重入（RAII guard 在 Drop 内复位，panic / 提前返回都不会卡在
+  "进行中"），全流程 spawn 到 async runtime 执行，不阻塞快捷键回调；反馈后 1.2s
+  回 idle 复用 `commands::overlay_idle_later`；Hyprland 会话剪贴板
   走 `wl-paste`/`wl-copy`（`inject.rs`），其余平台走 `arboard`。
+- `src/hub.rs` - 选区快捷动作 hub 编排（右键常驻胶囊唤出的圆环动作面板）：
+  打开即哨兵捕获选区（`translate::capture_selection_text`，文本暂存供动作点击
+  使用）、`hub-update` 事件状态流（capturing → ready / empty → processing →
+  done / result / error）、动作执行复用 `translate::run_with_text`（与翻译快捷键
+  共用 `BusyGuard` 互斥）。窗口定位 = 可见胶囊中心（渲染层测量的物理像素锚点）
+  压 hub 窗口中点，贴边时半出屏、半环由渲染层按 `app.overlayDocked` 朝屏幕内
+  展开；窗口生命周期归 `windowing::ensure_hub_window`（隐藏 / 重建，绝不销毁）。
 - `src/config.rs` - 配置存储（`voice-key-config.json`）。**配置写入线程安全**：
   所有写入口（`merge`：`set_config` 及其快捷键回滚、`test_refine_connection`、
   `set_app_language`、overlay 显隐 flag / 拖拽位置持久化）的

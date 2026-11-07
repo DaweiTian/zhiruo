@@ -7,6 +7,7 @@ import HistoryPage from './pages/HistoryPage'
 import { AudioRecorder } from './components/AudioRecorder'
 import { HUD } from './components/HUD'
 import { SessionHUD } from './components/SessionHUD'
+import { Hub } from './components/Hub'
 import { resolveWindowKind, type WindowKind } from './shared/window-kind'
 
 function readWindowKind(): WindowKind {
@@ -48,6 +49,12 @@ function App() {
   // visuals (session window, shown & positioned by Rust per session start).
   if (windowKind === 'session') {
     return <SessionHUD />
+  }
+
+  // Selection quick-action hub: radial menu around the resident capsule
+  // (hub window, shown & positioned by Rust on capsule right-click).
+  if (windowKind === 'hub') {
+    return <Hub />
   }
 
   const getPage = () => {

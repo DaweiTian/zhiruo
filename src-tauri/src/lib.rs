@@ -5,6 +5,7 @@ mod config;
 mod filler;
 mod history;
 mod hotkey;
+mod hub;
 mod inject;
 mod llm;
 mod mouse;
@@ -157,6 +158,13 @@ pub fn run() {
                     api.prevent_close();
                     commands::hide_session(window.app_handle());
                 }
+            } else if window.label() == windowing::HUB_WINDOW_LABEL {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Never destroy the hub window either: a close becomes a
+                    // hide (`hub::close_hub` clears the staged selection too).
+                    api.prevent_close();
+                    hub::close_hub(window.app_handle());
+                }
             }
         })
         .setup(|app| {
@@ -243,6 +251,10 @@ pub fn run() {
             commands::show_settings_window,
             commands::refine_text,
             commands::translate_text,
+            commands::open_selection_hub,
+            commands::close_selection_hub,
+            commands::run_selection_hub_action,
+            commands::copy_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Zhiruo");

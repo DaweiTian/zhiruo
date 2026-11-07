@@ -2098,6 +2098,48 @@ pub async fn translate_text(
     llm::translate_text(&text, &target_language, &config.llm_refine).await
 }
 
+// ---------------------------------------------------------------------------
+// Selection quick-action hub (right-click on the resident capsule)
+// ---------------------------------------------------------------------------
+
+/// 右键胶囊入口：toggle 打开 / 收起选区 hub，打开时捕获当前选区。
+/// `center_x` / `center_y` = 可见胶囊中心（**物理像素**，渲染层测量）；
+/// 缺失或非有限时回退 overlay 窗口中心（invoke 边界不可信）。
+#[tauri::command]
+pub async fn open_selection_hub(
+    app: AppHandle,
+    center_x: Option<f64>,
+    center_y: Option<f64>,
+) -> Result<(), String> {
+    let center = match (center_x, center_y) {
+        (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Some((x, y)),
+        _ => None,
+    };
+    crate::hub::open_hub(&app, center).await;
+    Ok(())
+}
+
+/// 收起 hub（结果卡片关闭按钮 / 背景点击）。幂等。
+#[tauri::command]
+pub async fn close_selection_hub(app: AppHandle) -> Result<(), String> {
+    crate::hub::close_hub(&app);
+    Ok(())
+}
+
+/// hub 动作点击：`action` ∈ `translate` / `polish` / `explain`（非法值报错）。
+#[tauri::command]
+pub async fn run_selection_hub_action(app: AppHandle, action: String) -> Result<(), String> {
+    crate::hub::run_hub_action(&app, &action).await;
+    Ok(())
+}
+
+/// 结果卡片「复制」：把文本写进系统剪贴板。用户显式复制，**不**还原
+/// 旧剪贴板（与选区流水线的临时写入语义不同）。
+#[tauri::command]
+pub fn copy_text(text: String) -> Result<(), String> {
+    crate::translate::write_clipboard_text(&text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

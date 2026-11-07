@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { getCurrentWindow, type Window as TauriWindow } from '@tauri-apps/api/window'
@@ -579,9 +580,10 @@ export function HUD() {
    * 盒外的窗口空白不再是热区——那是 hover 穿透的本意：点击 / 滚轮应当落到下层应用
    * （Rust 侧 `mouse.rs` 同矩形判定 + `set_ignore_cursor_events` 双保险）。
    *
-   * 手势结果由状态机裁决：轻点 → 松手时 latch 启动并保持；右键 / 中键同左键；位移超过
-   * 阈值 → 拖拽移窗（绝不启动会话）；停留过阈值 → 按住 PTT。窗口尺寸在整个手势 / 会话期间
-   * 恒定（不 resize / 不重锚定），故手势绝不会被自身的几何变化打断。
+   * 手势结果由状态机裁决：轻点 → 松手时 latch 启动并保持；中键同左键（右键
+   * 不进状态机，专属 hub）；位移超过阈值 → 拖拽移窗（绝不启动会话）；停留过
+   * 阈值 → 按住 PTT。窗口尺寸在整个手势 / 会话期间恒定（不 resize / 不重锚定），
+   * 故手势绝不会被自身的几何变化打断。
    */
   const handleIdlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const [nextState, cmds] = onPointerDown(
@@ -630,6 +632,34 @@ export function HUD() {
     applyDragResult(nextState, cmds)
   }
 
+  /**
+   * 右键胶囊 = 唤出选区快捷动作 hub（产品定稿手势分工：中键 / 键盘 = 语音，
+   * 右键 = 动文字）。手势状态机只认左键 / 中键（`onPointerDown` 拒绝 button 2），
+   * 右键是空闲按键，专供 hub 使用。
+   *
+   * 附带把可见胶囊中心（物理像素）报给 Rust：hub 窗口以它为锚点展开圆环，
+   * 贴边时半环才正确朝屏幕内侧。坐标经 invoke 边界，Rust 侧还会校验有限性。
+   */
+  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const rect = hitBoxRef.current?.getBoundingClientRect()
+    if (!rect) {
+      void window.electronAPI.openSelectionHub()
+      return
+    }
+    const win = getOverlayWindow()
+    Promise.all([win.outerPosition(), win.scaleFactor()])
+      .then(([pos, factor]) => {
+        void window.electronAPI.openSelectionHub({
+          x: pos.x + (rect.left + rect.width / 2) * factor,
+          y: pos.y + (rect.top + rect.height / 2) * factor,
+        })
+      })
+      .catch(() => {
+        void window.electronAPI.openSelectionHub()
+      })
+  }
+
   return (
     <div className="pointer-events-none fixed inset-0 flex items-center justify-center">
       {/* 胶囊热区盒：hover 穿透下唯一可交互的面（pointerdown / dblclick）与热区
@@ -656,6 +686,7 @@ export function HUD() {
         )}
         onPointerDown={handleIdlePointerDown}
         onDoubleClick={handleIdleDoubleClick}
+        onContextMenu={handleContextMenu}
       >
         {/* 布局容器：窗口常驻 280×64，待机胶囊居中于窗口。同时是 persist-position
             的胶囊尺寸测量盒（shrink-wrap = 胶囊实际尺寸，**不含**热区盒的 padding，

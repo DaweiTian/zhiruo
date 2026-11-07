@@ -30,7 +30,8 @@ voicekey/
                       set_config with hotkey rollback, hotkey capture guard.
       config.rs       JSON config store (voice-key-config.json); partial updates
                       are merged, and API keys stay on this side of the bridge.
-      history.rs      Transcript history store with 90-day retention.
+      history.rs      Transcript history store with 90-day retention (optional
+                      `source: "selection"` marks pre-replacement originals).
       stats.rs        Independent cumulative stats store (voice-key-stats.json),
                       process-level lock, one-time backfill from raw history.
       windowing.rs    Window lifecycle: Windows focus-border hardening, hide to
@@ -39,8 +40,12 @@ voicekey/
                       in-app and capture-active guards.
       mouse.rs        Windows-only mouse middle-button PTT (low-level hook on a
                       background message loop; no-op stub elsewhere).
-      translate.rs    Selected-text translation orchestration (clipboard snapshot,
-                      sentinel-based selection capture, LLM translate, restore).
+      translate.rs    Selection-action orchestration (clipboard snapshot,
+                      sentinel-based selection capture, LLM translate/polish/
+                      explain, paste-back with selection re-verify, restore).
+      hub.rs          Selection quick-action hub orchestration (right-click on
+                      the resident capsule: capture selection, hub-update event
+                      flow, radial-panel actions around the capsule).
       asr.rs          Local transcription (SenseVoice classic + X-ASR streaming).
       llm.rs          OpenAI-compatible refinement and translation calls.
       inject.rs       Text injection (enigo on Win/mac, wl-copy/wtype on Hyprland).
@@ -57,11 +62,11 @@ voicekey/
     icons-src/        Icon source SVG + render scripts (see its README).
   src/                React renderer (Vite).
     components/      React UI, HUD, recorder bridge, charts, logs, hotkey
-                     widgets, custom TitleBar.
+                     widgets, custom TitleBar, selection hub (Hub.tsx).
     components/ui/   shadcn/ui primitives.
     layouts/         Main app shell.
     lib/             Renderer utilities, stats, logger, theme, hotkey helpers,
-                     tauri-api.ts (invoke/event bridge).
+                     hub-geometry.ts (hub fan geometry), tauri-api.ts (invoke/event bridge).
     pages/           Home, Settings, and History routes.
     shared/          Types, constants, i18n resources, URL/host helpers
                      (shared with tests via vitest).

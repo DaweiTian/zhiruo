@@ -7,18 +7,22 @@ describe('resolveWindowKind', () => {
     expect(resolveWindowKind('overlay', '')).toBe('overlay')
     // 0.5.6 decoupling: the session capsule window routes to SessionHUD.
     expect(resolveWindowKind('session', '')).toBe('session')
+    // Selection quick-action hub (right-click on the resident capsule).
+    expect(resolveWindowKind('hub', '')).toBe('hub')
     expect(resolveWindowKind('background', '')).toBe('background')
   })
 
   it('lets a recognized label win over the hash', () => {
     expect(resolveWindowKind('session', '/overlay')).toBe('session')
     expect(resolveWindowKind('overlay', '/session')).toBe('overlay')
+    expect(resolveWindowKind('hub', '/overlay')).toBe('hub')
     expect(resolveWindowKind('main', '/history')).toBe('main')
   })
 
   it('falls back to the hash outside Tauri (browser preview)', () => {
     expect(resolveWindowKind(null, '/overlay')).toBe('overlay')
     expect(resolveWindowKind(null, '/session')).toBe('session')
+    expect(resolveWindowKind(null, '/hub')).toBe('hub')
     expect(resolveWindowKind(null, '/')).toBe('background')
     expect(resolveWindowKind(null, '')).toBe('background')
     expect(resolveWindowKind(null, '/history')).toBe('main')

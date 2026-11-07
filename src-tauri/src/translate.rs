@@ -1,4 +1,5 @@
-//! 选中文字翻译编排（翻译快捷键触发）：捕获前台应用选区 → LLM 翻译 → 模拟粘贴回原焦点。
+//! 选区动作编排（翻译快捷键 / 选区 hub 动作面板共用）：捕获前台应用选区 →
+//! LLM 处理 → 输出（改写类模拟粘贴覆盖选区，解释类只返回文本）。
 //!
 //! 移植自遗留 Electron 蓝本 `electron/main/translation/translator.ts`（只读参考）：
 //! 用「剪贴板哨兵 + 模拟 Ctrl+C + 轮询读取」判定是否真的选中了文字；`ClipboardGuard`
@@ -9,6 +10,10 @@
 //! 路径都通过 `error` 事件
 //! （设置窗口 SessionNotifications toast）与 HUD 胶囊 `overlay-update` 给出可见中文
 //! 提示，不静默吞错。
+//!
+//! hub（`hub.rs`）复用本模块的捕获与粘贴原语：右键胶囊时先 `capture_selection`
+//! 拿到选区文本，动作点击后走 `run_with_text` 输出；两条入口共用同一把
+//! `SELECTION_BUSY` 互斥，绝不并发跑两条选区流水线。
 
 use crate::audio::SessionStatus;
 use crate::state::AppState;
@@ -30,26 +35,54 @@ const SELECTION_COPY_POLL_INTERVAL_MS: u64 = 50;
 /// 粘贴后给 GUI 时间消费内容，再把剪贴板换回原内容。
 const GUI_PASTE_SETTLE_DELAY_MS: u64 = 500;
 
-/// 翻译进行中标志（蓝本 `isTranslating`）：快捷键连按只跑一条流水线。
-/// 通过 [`TranslatingGuard`] 的 RAII 语义复位，任何 return / panic 路径都不会
-/// 把标志永久卡在 true。
-static TRANSLATING: AtomicBool = AtomicBool::new(false);
+/// 选区动作进行中标志：翻译快捷键与 hub 动作共用一把互斥，连按 / 连点只跑
+/// 一条流水线。通过 [`BusyGuard`] 的 RAII 语义复位，任何 return / panic 路径
+/// 都不会把标志永久卡在 true。
+static SELECTION_BUSY: AtomicBool = AtomicBool::new(false);
 
-/// `TRANSLATING` 状态守卫：`acquire` 成功后持有标志，`Drop` 时无条件复位。
-struct TranslatingGuard;
+/// 选区动作类别：决定 LLM 调用与输出方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionAction {
+    /// 翻译 → 目标语言（`config.translation.target_language`），覆盖选区。
+    Translate,
+    /// 润色改写：同语种改写，覆盖选区。
+    Polish,
+    /// 解释说明：返回解释文本，不碰原文。
+    Explain,
+}
 
-impl TranslatingGuard {
-    fn acquire() -> Option<Self> {
-        TRANSLATING
+impl SelectionAction {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        match raw {
+            "translate" => Ok(Self::Translate),
+            "polish" => Ok(Self::Polish),
+            "explain" => Ok(Self::Explain),
+            other => Err(format!("未知的选区动作: {other}")),
+        }
+    }
+
+    /// 改写类动作覆盖选区；解释类只展示结果。
+    pub fn replaces_selection(self) -> bool {
+        matches!(self, Self::Translate | Self::Polish)
+    }
+}
+
+/// `SELECTION_BUSY` 状态守卫：`acquire` 成功后持有标志，`Drop` 时无条件复位。
+/// `pub(crate)`：hub 动作入口与翻译快捷键入口共用同一把互斥。
+pub(crate) struct BusyGuard;
+
+impl BusyGuard {
+    pub(crate) fn acquire() -> Option<Self> {
+        SELECTION_BUSY
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .ok()
             .map(|_| Self)
     }
 }
 
-impl Drop for TranslatingGuard {
+impl Drop for BusyGuard {
     fn drop(&mut self) {
-        TRANSLATING.store(false, Ordering::SeqCst);
+        SELECTION_BUSY.store(false, Ordering::SeqCst);
     }
 }
 
@@ -70,7 +103,7 @@ enum ClipboardSnapshot {
 ///
 /// 取舍：只快照/恢复纯文本（`arboard` 文本通道），图片 / HTML / RTF 等富格式
 /// 不在恢复范围——与 `inject.rs` 注入路径的剪贴板能力一致。
-struct ClipboardGuard {
+pub(crate) struct ClipboardGuard {
     original: ClipboardSnapshot,
     /// 最近一次**经由本守卫**写入剪贴板的文本（哨兵 / 译文）：恢复不可用时用它
     /// 识别"当前内容是我们自己的残留"，只清理我们写过的东西。
@@ -78,7 +111,7 @@ struct ClipboardGuard {
 }
 
 impl ClipboardGuard {
-    fn capture() -> Self {
+    pub(crate) fn capture() -> Self {
         let original = match read_clipboard_text() {
             Ok(text) if text.is_empty() => ClipboardSnapshot::Empty,
             Ok(text) => ClipboardSnapshot::Text(text),
@@ -96,7 +129,7 @@ impl ClipboardGuard {
     }
 
     /// 经由守卫写剪贴板（哨兵 / 译文），让 Drop 认得我们写过的残留。
-    fn write_owned(&mut self, text: &str) -> Result<(), String> {
+    pub(crate) fn write_owned(&mut self, text: &str) -> Result<(), String> {
         write_clipboard_text(text)?;
         self.last_written = Some(text.to_string());
         Ok(())
@@ -173,7 +206,7 @@ fn read_clipboard_text() -> Result<String, String> {
 }
 
 /// 写剪贴板文本（Hyprland 走 `wl-copy`，其余平台走 `arboard`）。
-fn write_clipboard_text(text: &str) -> Result<(), String> {
+pub(crate) fn write_clipboard_text(text: &str) -> Result<(), String> {
     if platform::is_hyprland_session() {
         return inject::hyprland_set_clipboard(text);
     }
@@ -186,7 +219,9 @@ fn write_clipboard_text(text: &str) -> Result<(), String> {
 /// 模拟 Ctrl+C 把选区写入剪贴板，用哨兵 + 超时轮询判定结果。
 /// 哨兵经 `guard` 写入，Drop 才认得这是我们的残留。
 /// `Ok(None)`：没有可用选区（哨兵未被替换，或复制到的内容为空白）。
-async fn capture_selection(guard: &mut ClipboardGuard) -> Result<Option<String>, String> {
+pub(crate) async fn capture_selection(
+    guard: &mut ClipboardGuard,
+) -> Result<Option<String>, String> {
     let sentinel = format!("{CLIPBOARD_SENTINEL_PREFIX}:{}", uuid::Uuid::new_v4());
     guard.write_owned(&sentinel)?;
     tokio::time::sleep(Duration::from_millis(CLIPBOARD_WRITE_DELAY_MS)).await;
@@ -262,16 +297,32 @@ fn emit_overlay<R: Runtime>(app: &AppHandle<R>, payload: Value) {
 // 翻译反馈（success / error）短暂停留后把胶囊送回待机：复用
 // `commands::overlay_idle_later`（同款语义：若期间开始了新的语音会话则不动）。
 
+/// 动作门控（每次动作前调用，早于任何剪贴板副作用）：
+/// - 翻译：沿用「设置 → 翻译」开关 + LLM 连接完整性（与翻译快捷键一致）；
+/// - 润色改写 / 解释说明：只查 LLM 连接完整性。
+pub(crate) fn gate_action(
+    config: &crate::config::AppConfig,
+    action: SelectionAction,
+) -> Result<(), String> {
+    if action == SelectionAction::Translate && !config.translation.enabled {
+        return Err("翻译功能未启用：请先在「设置 → 翻译」中开启后再使用翻译。".into());
+    }
+    if !llm::connection_ready(&config.llm_refine) {
+        return Err("LLM 配置不完整：请先在「设置 → 智能润色」中配置 LLM 服务与 API Key。".into());
+    }
+    Ok(())
+}
+
 /// 翻译快捷键入口：跑完整编排，并把结果反馈到 `error` toast 与 HUD 胶囊。
 /// 由 `hotkey.rs` spawn 到 async runtime 上调用（参考 PTT 松开 →
 /// `stop_session_internal` 的处理方式），绝不阻塞快捷键回调。
 pub async fn translate_selection<R: Runtime>(app: &AppHandle<R>) {
     // RAII guard: the flag is reset on every return / panic path.
-    let Some(_translating) = TranslatingGuard::acquire() else {
-        log::warn!("translate: translation already in progress, ignoring trigger");
+    let Some(_busy) = BusyGuard::acquire() else {
+        log::warn!("translate: selection action already in progress, ignoring trigger");
         return;
     };
-    let result = run(app).await;
+    let result = run(app, SelectionAction::Translate).await;
 
     match result {
         Ok(translated) => {
@@ -294,74 +345,112 @@ pub async fn translate_selection<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// 真正的编排（蓝本 `translate()` + `captureSelectedText()`），成功时返回译文。
+/// 完整编排（翻译快捷键）：动作门控 → 捕获选区 → [`run_with_text`]。
 /// 任何一步失败都带中文提示返回；剪贴板恢复由 `ClipboardGuard` 的 Drop 兜底。
-async fn run<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
+async fn run<R: Runtime>(app: &AppHandle<R>, action: SelectionAction) -> Result<String, String> {
     let config = app
         .try_state::<AppState>()
         .map(|s| s.config.load())
         .unwrap_or_default();
 
     // 1. 功能门控：与蓝本的静默跳过不同，禁用时给出明确的去处提示。
-    if !config.translation.enabled {
-        return Err("翻译功能未启用：请先在「设置 → 翻译」中开启后再使用翻译快捷键。".into());
-    }
-
-    // 2. 连接门控在任何剪贴板副作用之前（蓝本 `resolveConfig` 预检）。
-    if !llm::connection_ready(&config.llm_refine) {
-        return Err("翻译配置不完整：请先在「设置 → 智能润色」中配置 LLM 服务与 API Key。".into());
-    }
+    gate_action(&config, action)?;
 
     emit_overlay(
         app,
         json!({ "status": "processing", "processingStage": "translating" }),
     );
 
-    // 3. 剪贴板快照（三态，见 ClipboardGuard）。此后的每条 return 路径都由
+    // 2. 剪贴板快照（三态，见 ClipboardGuard）。此后的每条 return 路径都由
     //    Drop 处理剪贴板（恢复原文 / 清哨兵 / 不可读则跳过）。
     let mut guard = ClipboardGuard::capture();
     tokio::time::sleep(Duration::from_millis(HOTKEY_RELEASE_DELAY_MS)).await;
 
-    // 4. 哨兵 + 模拟复制 + 轮询读取选区。
+    // 3. 哨兵 + 模拟复制 + 轮询读取选区。
     let original = capture_selection(&mut guard)
         .await?
-        .ok_or_else(|| "未选中任何文字：请先选中要翻译的文本，再按翻译快捷键。".to_string())?;
+        .ok_or_else(|| "未选中任何文字：请先选中要处理的文本，再触发快捷键。".to_string())?;
 
     log::info!(
         "translate: captured selection ({} chars)",
         original.chars().count()
     );
 
-    // 5. LLM 翻译（复用 llm::translate_text，自带 60s 请求超时）。
-    let target_language = if config.translation.target_language.trim().is_empty() {
-        "English"
-    } else {
-        config.translation.target_language.trim()
+    run_with_text(app, action, &original, &mut guard).await
+}
+
+/// hub 复用的捕获入口：快照剪贴板 → 哨兵捕获选区 → 恢复剪贴板，只返回文本。
+/// `Ok(None)` = 没有可用选区。调用方（`hub.rs`）持有 [`BusyGuard`]。
+pub(crate) async fn capture_selection_text() -> Result<Option<String>, String> {
+    let mut guard = ClipboardGuard::capture();
+    let original = capture_selection(&mut guard).await?;
+    Ok(original.filter(|text| !text.trim().is_empty()))
+}
+
+/// 对已捕获的选区文本执行动作并输出（hub 动作点击后调用）：
+/// LLM 处理 → 改写类粘贴覆盖选区（先复查选区未变、原文进历史）。
+///
+/// `guard` 由调用方持有：改写类输出要用它写入 / 恢复剪贴板；解释类不动剪贴板。
+pub(crate) async fn run_with_text<R: Runtime>(
+    app: &AppHandle<R>,
+    action: SelectionAction,
+    original: &str,
+    guard: &mut ClipboardGuard,
+) -> Result<String, String> {
+    let config = app
+        .try_state::<AppState>()
+        .map(|s| s.config.load())
+        .unwrap_or_default();
+
+    let processed = match action {
+        SelectionAction::Translate => {
+            let target_language = if config.translation.target_language.trim().is_empty() {
+                "English"
+            } else {
+                config.translation.target_language.trim()
+            };
+            llm::translate_text(original, target_language, &config.llm_refine)
+                .await
+                .map_err(|e| format!("翻译失败：{e}"))?
+        }
+        SelectionAction::Polish => llm::polish_text(original, &config.llm_refine)
+            .await
+            .map_err(|e| format!("润色失败：{e}"))?,
+        SelectionAction::Explain => llm::explain_text(original, &config.llm_refine)
+            .await
+            .map_err(|e| format!("解释失败：{e}"))?,
     };
-    let translated = llm::translate_text(&original, target_language, &config.llm_refine)
-        .await
-        .map_err(|e| format!("翻译失败：{e}"))?;
-    if translated.trim().is_empty() {
-        return Err("翻译结果为空，未写回译文，已保留原文。".into());
+    if processed.trim().is_empty() {
+        return Err("处理结果为空，未写回内容，已保留原文。".into());
     }
 
-    // 6. 粘贴前复查选区未变（蓝本 `confirmSelectionStillMatches`）：防止 LLM
-    //    往返期间焦点 / 选区漂移后把译文贴到错误位置。
-    match capture_selection(&mut guard).await? {
-        Some(current) if normalize_line_endings(&current) == normalize_line_endings(&original) => {}
+    // 解释类：只返回文本，不碰选区与剪贴板。
+    if !action.replaces_selection() {
+        return Ok(processed);
+    }
+
+    // 粘贴前复查选区未变（蓝本 `confirmSelectionStillMatches`）：防止 LLM
+    // 往返期间焦点 / 选区漂移后把结果贴到错误位置。
+    match capture_selection(guard).await? {
+        Some(current) if normalize_line_endings(&current) == normalize_line_endings(original) => {}
         _ => {
-            return Err("选中内容已变化或已取消，为避免误替换未写回译文，请重新选中后重试。".into())
+            return Err("选中内容已变化或已取消，为避免误替换未写回结果，请重新选中后重试。".into())
         }
     }
 
-    // 7. 译文写入剪贴板（经守卫，Drop 才认得它是我们的残留）→ 模拟粘贴覆盖
-    //    选区 → 等 GUI 消费；随后 `guard` 的 Drop 把剪贴板换回原内容（成功路径
-    //    同样恢复）。
-    guard.write_owned(&translated)?;
+    // 原文进历史（可回溯）；写失败不阻断输出，只记日志。
+    if let Err(e) = crate::history::HistoryManager::add_selection_original(original.to_string()) {
+        log::warn!("translate: record selection original failed: {e}");
+    }
+
+    // 结果写入剪贴板（经守卫，Drop 才认得它是我们的残留）→ 模拟粘贴覆盖
+    // 选区 → 等 GUI 消费；随后 `guard` 的 Drop 把剪贴板换回原内容（成功路径
+    // 同样恢复）。
+    guard.write_owned(&processed)?;
     tokio::time::sleep(Duration::from_millis(CLIPBOARD_WRITE_DELAY_MS)).await;
-    inject::simulate_paste().map_err(|e| format!("模拟粘贴按键失败，译文未写回：{e}"))?;
+    inject::simulate_paste().map_err(|e| format!("模拟粘贴按键失败，结果未写回：{e}"))?;
     tokio::time::sleep(Duration::from_millis(GUI_PASTE_SETTLE_DELAY_MS)).await;
 
-    log::info!("translate: translation pasted back into the focused app");
-    Ok(translated)
+    log::info!("translate: {action:?} result pasted back into the focused app");
+    Ok(processed)
 }

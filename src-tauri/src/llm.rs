@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const TRANSLATE_SYSTEM_PROMPT: &str = "You are a precise translator. Translate the user's text into the target language. Preserve meaning, tone, and formatting. Return only the translation.";
+const POLISH_SYSTEM_PROMPT: &str = "You are a careful editor. Rewrite the user's text to improve clarity and fluency while preserving its meaning, tone, register, and the language it is written in. Fix grammar and wording issues and keep the original formatting. Return only the rewritten text.";
+const EXPLAIN_SYSTEM_PROMPT: &str = "You are a patient teacher. Explain the user's selected text clearly and concisely in the same language as the selection. If it is an error message or code, explain the likely cause and how to fix it; if it is terminology or a passage, explain the meaning. Use plain language. Return only the explanation.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -255,6 +257,16 @@ pub async fn translate_text(
 ) -> Result<String, String> {
     let user = format!("Target language: {target_language}\n\n{text}");
     chat_completion(TRANSLATE_SYSTEM_PROMPT, &user, config).await
+}
+
+/// 选区动作「润色改写」：原文语言内改写，不换语种。
+pub async fn polish_text(text: &str, config: &LLMRefineConfig) -> Result<String, String> {
+    chat_completion(POLISH_SYSTEM_PROMPT, text, config).await
+}
+
+/// 选区动作「解释说明」：返回解释文本（不写回文档）。
+pub async fn explain_text(text: &str, config: &LLMRefineConfig) -> Result<String, String> {
+    chat_completion(EXPLAIN_SYSTEM_PROMPT, text, config).await
 }
 
 /// Whether the LLM connection resolves to a complete endpoint / model / API

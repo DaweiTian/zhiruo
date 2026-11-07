@@ -372,6 +372,7 @@
   "history": {
     "title": "历史记录",
     "eyebrow": "听写历史",
+    "selectionOriginal": "选区原文",
     "clearTitle": "清空全部",
     "groupCount_one": "{{formattedCount}} 条",
     "groupCount_other": "{{formattedCount}} 条",
@@ -428,6 +429,20 @@
     "injected": "已注入",
     "error": "错误",
     "errorFallback": "发生错误"
+  },
+  "hub": {
+    "translate": "翻译",
+    "polish": "润色改写",
+    "explain": "解释说明",
+    "capturing": "正在读取选区…",
+    "noSelection": "未检测到选区",
+    "processing": "处理中…",
+    "done": "已替换",
+    "explainTitle": "解释说明",
+    "copy": "复制",
+    "copied": "已复制",
+    "close": "关闭",
+    "error": "处理失败"
   },
   "tray": {
     "settings": "设置",

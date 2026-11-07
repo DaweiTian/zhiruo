@@ -76,6 +76,12 @@ pub const OVERLAY_WINDOW_LABEL: &str = "overlay";
 /// rely on this exact string.
 pub const SESSION_WINDOW_LABEL: &str = "session";
 
+/// Label of the selection-hub window (radial quick-action menu shown around
+/// the resident capsule on right-click). Same rationale as
+/// [`OVERLAY_WINDOW_LABEL`]: `tauri.conf.json` and the renderer
+/// (`App.tsx` routes it to the hub panel) rely on this exact string.
+pub const HUB_WINDOW_LABEL: &str = "hub";
+
 /// How long a hidden main window survives before its WebView process is
 /// destroyed to reclaim memory (the window itself already hid to the tray).
 ///
@@ -120,6 +126,11 @@ static OVERLAY_CREATION_LOCK: Mutex<()> = Mutex::new(());
 /// from worker threads (`commands::session_show`'s rebuild thread), never from
 /// the main thread.
 static SESSION_CREATION_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serializes hub-window (re)creation, same invariant as
+/// [`OVERLAY_CREATION_LOCK`]: [`ensure_hub_window`] is only ever called from
+/// async/worker contexts (`hub::open_hub`), never from the main thread.
+static HUB_CREATION_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // Window-operation tracing
@@ -583,7 +594,9 @@ pub fn harden_app_windows<R: tauri::Runtime>(app: &AppHandle<R>) {
             // The session capsule is the overlay's twin (same shape, same
             // no-activate / no-frame requirements), so it gets the same
             // hardening pass.
-            OVERLAY_WINDOW_LABEL | SESSION_WINDOW_LABEL => harden_overlay_window(&window),
+            OVERLAY_WINDOW_LABEL | SESSION_WINDOW_LABEL | HUB_WINDOW_LABEL => {
+                harden_overlay_window(&window)
+            }
             _ => {}
         }
     }
@@ -978,6 +991,79 @@ fn build_session_window<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<
     });
 
     // Never leave a freshly built session capsule without its hardening.
+    harden_overlay_window(&window);
+    Ok(window)
+}
+
+// ---------------------------------------------------------------------------
+// Selection hub window rebuild lifecycle
+// ---------------------------------------------------------------------------
+
+/// Get the selection-hub window, rebuilding it on demand if a close path
+/// destroyed it. Mirrors [`ensure_overlay_window`]: the hub is normally only
+/// hidden (`hub::close_hub`), and a `CloseRequested` converts into a hide —
+/// rebuilding here keeps "right-clicking the capsule can always open the hub".
+///
+/// Threading: only call from worker / async threads - see [`HUB_CREATION_LOCK`].
+pub fn ensure_hub_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
+    let _guard = HUB_CREATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(window) = app.get_webview_window(HUB_WINDOW_LABEL) {
+        harden_overlay_window(&window);
+        return Some(window);
+    }
+    match build_hub_window(app) {
+        Ok(window) => Some(window),
+        Err(e) => {
+            // A concurrent rebuild won the race (duplicate label) or creation
+            // failed transiently: prefer the existing window over giving up.
+            log::warn!("hub window build failed ({e}); falling back to the existing window");
+            let window = app.get_webview_window(HUB_WINDOW_LABEL)?;
+            harden_overlay_window(&window);
+            Some(window)
+        }
+    }
+}
+
+/// Rebuild the hub with the same shape as the `hub` entry in
+/// `tauri.conf.json` (square, decorations off, **shadow off**, transparent,
+/// always-on-top, skip-taskbar, not initially focused, hidden until shown).
+/// It reuses the overlay capsule's whole Windows hardening stack (no-activate,
+/// no DWM frame, no opaque backdrop) — same shape, same requirements.
+fn build_hub_window<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        HUB_WINDOW_LABEL,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("芷若")
+    .inner_size(crate::hub::HUB_WINDOW_SIZE, crate::hub::HUB_WINDOW_SIZE)
+    .resizable(false)
+    .decorations(false)
+    .shadow(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(false)
+    // Same as `build_overlay_window`: non-focusable, so tao's style writes keep
+    // `WS_EX_NOACTIVATE` and `show()` cannot activate the hub (activating it is
+    // what makes WebView2 paint its ghost titlebar). Keep in sync with the
+    // `hub` entry in `tauri.conf.json`.
+    .focusable(false)
+    .visible(false)
+    .build()?;
+
+    // CloseRequested -> hide (never destroy), same belt-and-braces as the
+    // other capsule windows.
+    let handle = window.app_handle().clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            crate::hub::close_hub(&handle);
+        }
+    });
+
     harden_overlay_window(&window);
     Ok(window)
 }

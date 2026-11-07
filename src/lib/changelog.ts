@@ -89,19 +89,32 @@ export function parseChangelog(raw: string, minVersion = '0.5.0'): ChangelogEntr
  *
  * 覆盖 CHANGELOG.md 正文实际使用的语法：
  * ATX 标题（### / ####）、无序列表、粗体、行内 code、围栏代码块、链接、分隔线。
- * HTML 特殊字符会被转义，避免注入。
+ *
+ * 注入防线：先对**全文**做 HTML 转义（含引号）再解析标记，正文 / 标题 /
+ * 列表 / 链接文字都不可能带出原始 HTML；围栏语言串用字符集白名单进 class
+ * 属性；链接 href 仅放行 http(s) 协议。
  */
 export function renderMarkdown(raw: string): string {
   const escapeHtml = (text: string): string =>
-    text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+
+  // 全文先转义（占位符 / 标记语法不受影响），后续规则不再二次转义
+  let processed = escapeHtml(raw)
 
   // 1. 提取并替换围栏代码块，避免内部内容被后续规则误处理
   const codeBlocks: { placeholder: string; html: string }[] = []
-  let processed = raw.replace(
+  processed = processed.replace(
     /^ {0,3}(```|~~~)([^\n]*)\n([\s\S]*?)^ {0,3}\1[\s]*$/gm,
     (_match, _fence, lang: string, code: string) => {
-      const langClass = lang.trim() ? ` class="language-${escapeHtml(lang.trim())}"` : ''
-      const html = `<pre><code${langClass}>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`
+      // 语言串只允许标识符形态进 class 属性，其余整体丢弃
+      const trimmed = lang.trim()
+      const langClass = /^[a-zA-Z0-9_+#.-]+$/.test(trimmed) ? ` class="language-${trimmed}"` : ''
+      const html = `<pre><code${langClass}>${code.replace(/\n$/, '')}</code></pre>`
       const placeholder = `\u0000CODEBLOCK${codeBlocks.length}\u0000`
       codeBlocks.push({ placeholder, html })
       return placeholder
@@ -111,7 +124,7 @@ export function renderMarkdown(raw: string): string {
   // 2. 行内格式化（在块级处理前先保护 code 内容）
   const inlineCodes: { placeholder: string; html: string }[] = []
   processed = processed.replace(/`([^`\n]+)`/g, (_match, code: string) => {
-    const html = `<code>${escapeHtml(code)}</code>`
+    const html = `<code>${code}</code>`
     const placeholder = `\u0000INLINECODE${inlineCodes.length}\u0000`
     inlineCodes.push({ placeholder, html })
     return placeholder
@@ -120,11 +133,11 @@ export function renderMarkdown(raw: string): string {
   // 粗体（非贪婪，避免跨多个粗体段匹配）
   processed = processed.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
 
-  // 链接
-  processed = processed.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    (_match, text: string, href: string) =>
-      `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${text}</a>`,
+  // 链接：href 已随全文转义，仍需协议白名单，拒绝 javascript: 等
+  processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text: string, href: string) =>
+    /^https?:\/\//i.test(href)
+      ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`
+      : `${text} (${href})`,
   )
 
   // 3. 块级处理

@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.7.0](https://github.com/BuildWithAIs/voicekey/compare/v0.6.0...v0.7.0) (2026-11-07)
+
+### Features
+
+- **ui:** 三主题体系取代明暗二选一——**科幻**（暗色，深空蓝黑 + 青蓝霓虹）/ **清新**（亮色，浅薄荷 + 草绿）/ **商务**（亮色，冷灰白 + 藏青），各自成套的背景 / 卡片 / 主色 / 圆角；切换入口两处：侧栏底部三图标（火箭 / 叶子 / 公文包）与设置页「外观 → 界面主题」带预览色板的卡片；老的浅色 / 深色偏好自动迁移（浅色→清新、深色→科幻），首帧预置脚本同步改造避免闪白
+- **ui:** 强调色新增「跟随主题」（auto）默认——各主题自带主色，显式选色时覆盖主题主色系；存储键换代（`vk-accent-v2`），默认不再被隐式写入的橄榄绿污染
+- **ui:** 侧栏左下角版本号改为**七段数码管**呈现——暗底 LED 模块 + 六边形段位 + 主题色辉光 + 幽灵暗段（`SegmentDisplay`，段位映射在 `lib/segment-display.ts`），点击仍可打开更新日志
+
+### Bug Fixes
+
+- **theme:** `useTheme` 收敛为模块级共享 store（`useSyncExternalStore`）——此前侧栏与设置页各自持有一份状态，一处切换另一处高亮卡死、再次点击变 no-op；overlay / hub / session 等窗口此前不应用主题恒吃默认色板，现由 `main.tsx` 入口统一初始化；老存储值迁移后落盘，避免内存归一、磁盘永留旧值
+- **log:** 修复 fire-and-forget `invoke` 丢弃 rejected promise 造成的 unhandledrejection 死循环——浏览器预览（dev:vite 无宿主）下经 logger 的 console 包装器无限刷 error（单次会话 console 日志可刷至 200MB+）；`log` / 音频上报 / 事件订阅等全部静默通道补齐吞错
+- **security:** 更新日志 Markdown 渲染（`renderMarkdown`）注入面收紧——全文先 HTML 转义（含引号）再解析标记，围栏语言串字符集白名单，链接 href 仅放行 http(s)，下游 `dangerouslySetInnerHTML` 不再可被正文原始 HTML / `javascript:` 污染
+- **security:** 渲染层权限与 CSP 收紧——移除无调用方的 `opener:default` / `shell:allow-open`（可绕过 `open_external` 的 GitHub 白名单）；CSP 补 `base-uri 'none'` / `object-src 'none'` / `frame-ancestors 'none'`
+- **security:** Rust 边界加固——云端 ASR endpoint 复用 llm 的 https/localhost 守卫（防 bearer key 明文外带）；`test_refine_connection` 仅合并 `llmRefine` 段（此前可夹带 hotkey 等任意段绕过 `set_config` 守卫）；音频 chunk / 流式帧补单块与会话累计字节护栏；更新链接白名单改整段匹配（防 `/releases-evil/` 前缀绕过）；日志脱敏覆盖 `ghp_` / `AIza` 等更多 key 形态；配置合并字段（llm / hotkey / translation）统一长度上限
+- **ui:** 历史详情日期分隔符误植「路」改为「·」；设置页卸载 flush 的脏判定漏 `middleClickPtt`（改动可能丢失）；语言切换失败后基线失真导致永不重试；HotkeyRecorder 回调 ref 化不再每次渲染重绑全局监听；首页 / 历史页加请求序守卫防旧响应覆盖新数据
+
+### Notes
+
+- 发布前完成 **5 轮代码审查**（渲染层安全 / Rust 主进程安全 / 主题改造正确性 / 错误处理与代码质量 / 一致性终审），高危 3 项（changelog XSS、预置脚本未随主题改造、多窗口不应用主题）与全部中低危必修项落地；顺带清掉 5 个 Rust 死函数（零警告）；前端 239 + Rust 92 用例全绿
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`
+
 ## [0.6.0](https://github.com/BuildWithAIs/voicekey/compare/v0.5.14...v0.6.0) (2026-11-03)
 
 ### Features

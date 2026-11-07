@@ -12,10 +12,12 @@
     "view": "查看更新日志"
   },
   "theme": {
-    "light": "浅色",
-    "dark": "深色",
+    "scifi": "科幻",
+    "fresh": "清新",
+    "business": "商务",
     "accent": {
       "label": "选择强调色",
+      "auto": "跟随主题",
       "gulfBlue": "海湾蓝",
       "oliveGreen": "橄榄绿",
       "lavaOrange": "熔岩橙",
@@ -112,8 +114,8 @@
     "descLogs": "排查问题时使用",
     "appearance": {
       "title": "外观",
-      "description": "主题模式、强调色与界面风格",
-      "themeMode": "主题模式",
+      "description": "界面主题、强调色与整体风格",
+      "themeStyle": "界面主题",
       "accentColor": "强调色"
     },
     "connectionTitle": "连接状态",

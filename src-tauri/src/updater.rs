@@ -25,10 +25,10 @@ fn sanitize_release_url(url: Option<&str>) -> String {
         return default_release_url();
     };
     let allowed = format!("/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/releases");
-    if parsed.scheme() != "https"
-        || parsed.host_str() != Some("github.com")
-        || !parsed.path().starts_with(&allowed)
-    {
+    let path = parsed.path();
+    // 要求整段相等或以 `allowed/` 续接，避免 `/releases-evil/…` 绕过前缀匹配
+    let path_ok = path == allowed || path.starts_with(&format!("{allowed}/"));
+    if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") || !path_ok {
         return default_release_url();
     }
     parsed.to_string()
@@ -105,10 +105,10 @@ fn version_gt(latest: &str, current: &str) -> bool {
 pub fn sanitize_external_url(url: &str) -> Result<String, String> {
     let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
     let allowed = format!("/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/releases");
-    if parsed.scheme() == "https"
-        && parsed.host_str() == Some("github.com")
-        && parsed.path().starts_with(&allowed)
-    {
+    let path = parsed.path();
+    // 要求整段相等或以 `allowed/` 续接，避免 `/releases-evil/…` 绕过前缀匹配
+    let path_ok = path == allowed || path.starts_with(&format!("{allowed}/"));
+    if parsed.scheme() == "https" && parsed.host_str() == Some("github.com") && path_ok {
         Ok(parsed.to_string())
     } else {
         Err("URL is not an allowed GitHub release link".into())

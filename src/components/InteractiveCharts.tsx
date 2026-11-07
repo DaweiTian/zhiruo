@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { getLocale } from '@/shared/i18n'
 import { cn } from '@/lib/utils'
 import { countCharacters } from '@/lib/stats'
+import type { HistoryItem } from '@/shared/types'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -14,13 +15,6 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart'
-
-export interface HistoryItem {
-  id: string
-  text: string
-  timestamp: number
-  duration?: number
-}
 
 interface TrendPoint {
   label: string

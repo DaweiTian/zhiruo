@@ -32,3 +32,7 @@ temp-docs/
 # Rust / Tauri build output
 src-tauri/target/
 src-tauri/gen/
+
+# 浏览器 QA 快照/截图（playwright-cli 产物）
+.playwright-cli/
+output/

@@ -179,6 +179,8 @@ pub async fn transcribe_cloud(call: &CloudCall<'_>, audio_wav: &[u8]) -> Result<
     if call.api_key.trim().is_empty() {
         return Err(missing_key_error());
     }
+    // 与 llm 同款守卫：拒绝明文 http 远端，防 bearer key 外带
+    crate::llm::require_https_or_localhost(call.base_url)?;
     let payload = match call.dialect {
         CloudDialect::OpenaiTranscribe => {
             return transcribe_openai_transcribe(call, audio_wav).await;
@@ -339,6 +341,8 @@ pub async fn transcribe_cloud_stream(
     if call.api_key.trim().is_empty() {
         return Err(missing_key_error());
     }
+    // 与 llm 同款守卫：拒绝明文 http 远端，防 bearer key 外带
+    crate::llm::require_https_or_localhost(call.base_url)?;
     let mut payload = match call.dialect {
         CloudDialect::OpenaiTranscribe => {
             return transcribe_openai_transcribe(call, audio_wav).await;

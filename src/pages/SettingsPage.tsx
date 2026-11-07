@@ -18,8 +18,6 @@ import {
   KeyRound,
   MousePointer,
   Palette,
-  Sun,
-  Moon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -75,7 +73,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { useTheme } from '@/lib/useTheme'
+import { useTheme, THEME_OPTIONS } from '@/lib/useTheme'
 import { validateHotkey } from '@/lib/hotkey-utils'
 import { ChangelogDialog } from '@/components/ChangelogDialog'
 import { AccentSelector } from '@/components/AccentSelector'
@@ -586,21 +584,22 @@ export default function SettingsPage() {
         language: setting,
       },
     }))
-    setOriginalConfig((prev) =>
-      prev
-        ? {
-            ...prev,
-            app: {
-              ...prev.app,
-              language: setting,
-            },
-          }
-        : prev,
-    )
     setSaveStatus({ state: 'saving', message: t('settings.autoSave.saving') })
     void window.electronAPI
       .setConfig({ app: { language: setting } })
       .then(() => {
+        // 持久化成功才推进基线；失败时保持 dirty，自动保存 / 卸载 flush 才能重试
+        setOriginalConfig((prev) =>
+          prev
+            ? {
+                ...prev,
+                app: {
+                  ...prev.app,
+                  language: setting,
+                },
+              }
+            : prev,
+        )
         setSaveStatus({ state: 'success', message: t('settings.autoSave.saved') })
       })
       .catch((error) => {
@@ -1449,7 +1448,8 @@ export default function SettingsPage() {
           isAsrConfigDirty(currentConfig.asr, currentOriginalConfig.asr) ||
           isLlmRefineDirty(normalizedRefineConfig, currentOriginalConfig.llmRefine) ||
           isHotkeyConfigDirty(currentConfig.hotkey, currentOriginalConfig.hotkey) ||
-          isTranslationConfigDirty(currentConfig.translation, currentOriginalConfig.translation)
+          isTranslationConfigDirty(currentConfig.translation, currentOriginalConfig.translation) ||
+          isMouseConfigDirty(currentConfig.mouse, currentOriginalConfig.mouse)
 
         if (hasPendingChanges) {
           void flushAutoSaveRef.current()
@@ -1627,34 +1627,53 @@ export default function SettingsPage() {
           >
             <div className="space-y-5">
               <div className="space-y-2">
-                <Label>{t('settings.appearance.themeMode')}</Label>
-                <div className="no-drag inline-flex items-center gap-0.5 rounded-full border bg-secondary p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setTheme('light')}
-                    title={t('theme.light')}
-                    className={cn(
-                      'grid h-[26px] w-[30px] cursor-pointer place-items-center rounded-full transition-colors',
-                      theme === 'light'
-                        ? 'bg-card text-primary shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    <Sun className="h-[14px] w-[14px]" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTheme('dark')}
-                    title={t('theme.dark')}
-                    className={cn(
-                      'grid h-[26px] w-[30px] cursor-pointer place-items-center rounded-full transition-colors',
-                      theme === 'dark'
-                        ? 'bg-card text-primary shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    <Moon className="h-[14px] w-[14px]" />
-                  </button>
+                <Label>{t('settings.appearance.themeStyle')}</Label>
+                <div className="no-drag grid grid-cols-3 gap-2">
+                  {THEME_OPTIONS.map((option) => {
+                    const selected = theme === option.id
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setTheme(option.id)}
+                        aria-pressed={selected}
+                        aria-label={t(option.nameKey)}
+                        className={cn(
+                          'cursor-pointer rounded-xl border bg-card p-2 text-left transition-all hover:border-primary/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                          selected ? 'border-primary ring-1 ring-primary' : 'border-border',
+                        )}
+                      >
+                        <div
+                          className="mb-1.5 h-11 rounded-lg p-2"
+                          style={{ background: option.previewBg }}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="h-3 w-3 shrink-0 rounded-full"
+                              style={{ background: option.previewPrimary }}
+                            />
+                            <span
+                              className="h-1.5 flex-1 rounded-full"
+                              style={{ background: option.previewFg, opacity: 0.35 }}
+                            />
+                          </div>
+                          <div className="mt-2 flex items-center gap-1.5">
+                            <span
+                              className="h-1.5 w-8 rounded-full"
+                              style={{ background: option.previewPrimary, opacity: 0.9 }}
+                            />
+                            <span
+                              className="h-1.5 w-5 rounded-full"
+                              style={{ background: option.previewFg, opacity: 0.22 }}
+                            />
+                          </div>
+                        </div>
+                        <span className="block truncate text-[12.5px] font-medium text-foreground">
+                          {t(option.nameKey)}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
               <div className="space-y-2">

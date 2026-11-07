@@ -1,14 +1,31 @@
 import { ReactNode, useCallback, useState } from 'react'
-import { ChevronLeft, ChevronRight, Home, Settings, History, Sun, Moon } from 'lucide-react'
+import {
+  ChevronLeft,
+  ChevronRight,
+  Home,
+  Settings,
+  History,
+  Rocket,
+  Leaf,
+  Briefcase,
+  type LucideIcon,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import { useTheme } from '@/lib/useTheme'
+import { useTheme, THEME_OPTIONS, type Theme } from '@/lib/useTheme'
 import TitleBar from '@/components/TitleBar'
+import { SegmentDisplay } from '@/components/SegmentDisplay'
 import { ChangelogDialog } from '@/components/ChangelogDialog'
 
 interface MainLayoutProps {
   children: ReactNode
   currentRoute: string
+}
+
+const THEME_ICONS: Record<Theme, LucideIcon> = {
+  scifi: Rocket,
+  fresh: Leaf,
+  business: Briefcase,
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'vk-sidebar-collapsed'
@@ -116,7 +133,7 @@ export default function MainLayout({ children, currentRoute }: MainLayoutProps) 
               {/* 版本 + 主题切换 - 折叠态隐藏 */}
               <div
                 className={cn(
-                  'mt-3 flex items-center justify-between px-1 transition-opacity duration-200',
+                  'mt-3 flex items-center justify-between gap-2 px-1 transition-opacity duration-200',
                   collapsed ? 'invisible opacity-0' : 'opacity-100',
                 )}
                 aria-hidden={collapsed}
@@ -125,39 +142,34 @@ export default function MainLayout({ children, currentRoute }: MainLayoutProps) 
                   type="button"
                   onClick={() => setChangelogOpen(true)}
                   title={t('changelog.openTitle')}
-                  className="no-drag inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15"
+                  className="vk-seg-plate no-drag cursor-pointer transition-opacity hover:opacity-90"
                   aria-label={t('changelog.openTitle')}
                 >
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  <span className="font-mono">v{__APP_VERSION__}</span>
+                  <span className="vk-seg-plate-tag">V</span>
+                  <SegmentDisplay value={__APP_VERSION__ ?? ''} />
                 </button>
-                <div className="no-drag flex items-center gap-0.5 rounded-full border bg-secondary p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setTheme('light')}
-                    title={t('theme.light')}
-                    className={cn(
-                      'grid h-[22px] w-[26px] cursor-pointer place-items-center rounded-full transition-colors',
-                      theme === 'light'
-                        ? 'bg-card text-primary shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    <Sun className="h-[14px] w-[14px]" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTheme('dark')}
-                    title={t('theme.dark')}
-                    className={cn(
-                      'grid h-[22px] w-[26px] cursor-pointer place-items-center rounded-full transition-colors',
-                      theme === 'dark'
-                        ? 'bg-card text-primary shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    <Moon className="h-[14px] w-[14px]" />
-                  </button>
+                <div className="no-drag flex shrink-0 items-center gap-0.5 rounded-full border bg-secondary p-0.5">
+                  {THEME_OPTIONS.map((option) => {
+                    const Icon = THEME_ICONS[option.id]
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setTheme(option.id)}
+                        title={t(option.nameKey)}
+                        aria-label={t(option.nameKey)}
+                        aria-pressed={theme === option.id}
+                        className={cn(
+                          'grid h-[22px] w-[26px] cursor-pointer place-items-center rounded-full transition-colors',
+                          theme === option.id
+                            ? 'bg-card text-primary shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        <Icon className="h-[13px] w-[13px]" />
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             </div>

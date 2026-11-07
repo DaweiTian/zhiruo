@@ -94,7 +94,11 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 ### `AccentSelector.tsx`
 
-强调色选择器：以色块 + 名称展示可用主题强调色，支持键盘导航与 `aria-checked` 选中态。
+强调色选择器：以色块 + 名称展示「跟随主题」与 6 种显式强调色，支持键盘导航与 `aria-checked` 选中态。「跟随主题」不写 `data-accent`，主色随界面主题走；显式色覆盖主题主色系。
+
+### `SegmentDisplay.tsx`
+
+七段数码管显示：暗底 LED 模块（`.vk-seg-plate`）+ 分段数字 SVG，点亮段继承 `--primary` 并带辉光，未点亮段保留幽灵段。支持 `0-9`、小数点、冒号与 `- _ =`；段位映射在 `lib/segment-display.ts`。侧栏底部版本号使用。
 
 ### `ChangelogDialog.tsx`
 

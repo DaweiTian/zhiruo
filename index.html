@@ -6,27 +6,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>芷若</title>
     <script>
-      // 在首帧前应用主题与强调色，避免闪烁
+      // 在首帧前应用主题与强调色，避免闪烁。
+      // 与 src/lib/useTheme.ts 的 resolveTheme/resolveAccent 口径保持一致：
+      // 三主题 scifi/fresh/business（scifi 暗），老 light/dark 值迁移；
+      // 强调色 v2 键，auto/缺省 = 跟随主题（不写 data-accent）。
       try {
+        var root = document.documentElement
         var t = localStorage.getItem('vk-theme')
+        var theme =
+          t === 'scifi' || t === 'fresh' || t === 'business'
+            ? t
+            : t === 'dark'
+              ? 'scifi'
+              : t === 'light'
+                ? 'fresh'
+                : window.matchMedia('(prefers-color-scheme: dark)').matches
+                  ? 'scifi'
+                  : 'fresh'
+        root.setAttribute('data-theme', theme)
+        if (theme === 'scifi') root.classList.add('dark')
+        root.style.colorScheme = theme === 'scifi' ? 'dark' : 'light'
+        var a = localStorage.getItem('vk-accent-v2')
         if (
-          t === 'dark' ||
-          (t === null && window.matchMedia('(prefers-color-scheme: dark)').matches)
-        ) {
-          document.documentElement.classList.add('dark')
-        }
-        var a = localStorage.getItem('vk-accent')
-        document.documentElement.setAttribute(
-          'data-accent',
           a === 'gulf-blue' ||
-            a === 'olive-green' ||
-            a === 'lava-orange' ||
-            a === 'sunset-purple' ||
-            a === 'elegant-grey' ||
-            a === 'classic'
-            ? a
-            : 'olive-green',
-        )
+          a === 'olive-green' ||
+          a === 'lava-orange' ||
+          a === 'sunset-purple' ||
+          a === 'elegant-grey' ||
+          a === 'classic'
+        ) {
+          root.setAttribute('data-accent', a)
+        }
       } catch (e) {}
     </script>
   </head>

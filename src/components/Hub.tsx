@@ -9,7 +9,7 @@
  * processing → done（改写类，稍后自动收起）/ result（解释类，展示卡片）。
  * 扇区文字沿弧排布（`textPath`），展开动画见 index.css `.hub-sector-in`。
  */
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   buildHubSectors,
@@ -63,12 +63,16 @@ export function Hub() {
   })
   const [hovered, setHovered] = useState<HubAction | null>(null)
   const [copied, setCopied] = useState(false)
+  const copiedResetTimerRef = useRef(0)
 
   useEffect(() => {
     const unsub = window.electronAPI.onHubUpdate((payload) => {
       setState(readPayload(payload))
     })
-    return () => unsub()
+    return () => {
+      unsub()
+      window.clearTimeout(copiedResetTimerRef.current)
+    }
   }, [])
 
   const sectors = useMemo(() => buildHubSectors(state.dockEdge), [state.dockEdge])
@@ -78,22 +82,28 @@ export function Hub() {
   const ringDimmed = state.status === 'processing' || state.status === 'done'
 
   const close = () => {
-    void window.electronAPI.closeSelectionHub()
+    void window.electronAPI.closeSelectionHub().catch(() => {})
   }
 
   const runAction = (event: ReactMouseEvent, action: HubAction) => {
     event.stopPropagation()
     if (!interactive) return
-    void window.electronAPI.runSelectionHubAction(action)
+    void window.electronAPI.runSelectionHubAction(action).catch(() => {})
   }
 
   const copyResult = (event: ReactMouseEvent) => {
     event.stopPropagation()
     if (!state.result) return
-    void window.electronAPI.copyText(state.result).then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1200)
-    })
+    void window.electronAPI
+      .copyText(state.result)
+      .then(() => {
+        setCopied(true)
+        window.clearTimeout(copiedResetTimerRef.current)
+        copiedResetTimerRef.current = window.setTimeout(() => setCopied(false), 1200)
+      })
+      .catch(() => {
+        console.warn('[Renderer] Hub copy failed')
+      })
   }
 
   const statusText = (() => {

@@ -117,8 +117,3 @@ pub fn simulate_paste() -> Result<(), String> {
     }
     chord(modifier_key(), Key::Unicode('v'))
 }
-
-pub fn press_key(key: Key) -> Result<(), String> {
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
-    enigo.key(key, Direction::Click).map_err(|e| e.to_string())
-}

@@ -45,6 +45,11 @@ export function HotkeyRecorder({
   // 使用 Ref 来保持最新的按键状态，解决 useEffect 依赖导致的监听器反复重绑问题
   const pressedKeysRef = useRef<Set<string>>(new Set())
   const recorderRef = useRef<HTMLDivElement>(null)
+  // onChange 常由父级内联箭头传入，进依赖会每次渲染重绑全局监听；ref 化只读最新值
+  const onChangeRef = useRef(onChange)
+  useEffect(() => {
+    onChangeRef.current = onChange
+  }, [onChange])
 
   useEffect(() => {
     if (!isRecording || disabled) return
@@ -91,7 +96,7 @@ export function HotkeyRecorder({
           // 提交按键集合里的 token（而不是 keyup 归一值）：AltGr 松开时可能先收到
           // 合成 Control 的 keyup，集合中的 'AltRight' 才是用户实际按下的键
           const soleKey = [...pressedKeysRef.current][0]
-          onChange(soleKey ?? token)
+          onChangeRef.current(soleKey ?? token)
           setIsRecording(false)
           pressedKeysRef.current.clear()
           setPressedKeys(new Set())
@@ -115,7 +120,7 @@ export function HotkeyRecorder({
 
         const accelerator = buildAccelerator(pressedKeysRef.current)
         if (accelerator) {
-          onChange(accelerator)
+          onChangeRef.current(accelerator)
         }
         setIsRecording(false)
         pressedKeysRef.current.clear()
@@ -149,7 +154,7 @@ export function HotkeyRecorder({
       window.removeEventListener('mousedown', handleClickOutside)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [allowModifierOnly, disabled, isRecording, onChange, t])
+  }, [allowModifierOnly, disabled, isRecording, t])
 
   // 录制期间通知 Rust 屏蔽全局快捷键触发（PTT / 翻译），否则录入组合键时会误启动录音。
   // effect cleanup 覆盖所有退出路径（提交、Esc、点击外部、失焦、卸载），保证 flag 不会卡死。

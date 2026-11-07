@@ -765,7 +765,7 @@ impl ConfigStore {
                     if v == STORED_SECRET_PLACEHOLDER {
                         // keep stored value
                     } else {
-                        merged.asr.cloud_api_key = v.to_string();
+                        merged.asr.cloud_api_key = v.chars().take(512).collect();
                     }
                 }
                 if let Some(v) = obj
@@ -798,13 +798,13 @@ impl ConfigStore {
                 next.enabled = v;
             }
             if let Some(v) = llm.get("provider").and_then(|v| v.as_str()) {
-                next.provider = v.to_string();
+                next.provider = v.chars().take(64).collect();
             }
             if let Some(v) = llm.get("endpoint").and_then(|v| v.as_str()) {
-                next.endpoint = v.to_string();
+                next.endpoint = v.chars().take(512).collect();
             }
             if let Some(v) = llm.get("model").and_then(|v| v.as_str()) {
-                next.model = v.to_string();
+                next.model = v.chars().take(128).collect();
             }
             if let Some(v) = llm.get("translateOutput").and_then(|v| v.as_bool()) {
                 next.translate_output = v;
@@ -813,7 +813,7 @@ impl ConfigStore {
                 if v == STORED_SECRET_PLACEHOLDER {
                     next.api_key = merged.llm_refine.api_key.clone();
                 } else {
-                    next.api_key = v.to_string();
+                    next.api_key = v.chars().take(512).collect();
                 }
             }
 
@@ -827,10 +827,10 @@ impl ConfigStore {
             ] {
                 if let Some(provider) = llm.get(key) {
                     if let Some(v) = provider.get("model").and_then(|v| v.as_str()) {
-                        slot.model = v.to_string();
+                        slot.model = v.chars().take(128).collect();
                     }
                     if let Some(v) = provider.get("endpoint").and_then(|v| v.as_str()) {
-                        slot.endpoint = v.to_string();
+                        slot.endpoint = v.chars().take(512).collect();
                     }
                     if let Some(v) = provider.get("apiKey").and_then(|v| v.as_str()) {
                         if v == STORED_SECRET_PLACEHOLDER {
@@ -843,7 +843,7 @@ impl ConfigStore {
                                 _ => stored.llm_refine.custom.api_key.clone(),
                             };
                         } else {
-                            slot.api_key = v.to_string();
+                            slot.api_key = v.chars().take(512).collect();
                         }
                     }
                 }
@@ -880,13 +880,13 @@ impl ConfigStore {
 
         if let Some(hotkey) = partial.get("hotkey") {
             if let Some(v) = hotkey.get("pttKey").and_then(|v| v.as_str()) {
-                merged.hotkey.ptt_key = v.to_string();
+                merged.hotkey.ptt_key = v.chars().take(128).collect();
             }
             if let Some(v) = hotkey.get("toggleSettings").and_then(|v| v.as_str()) {
-                merged.hotkey.toggle_settings = v.to_string();
+                merged.hotkey.toggle_settings = v.chars().take(128).collect();
             }
             if let Some(v) = hotkey.get("translateKey").and_then(|v| v.as_str()) {
-                merged.hotkey.translate_key = v.to_string();
+                merged.hotkey.translate_key = v.chars().take(128).collect();
             }
         }
 
@@ -895,7 +895,7 @@ impl ConfigStore {
                 merged.translation.enabled = v;
             }
             if let Some(v) = translation.get("targetLanguage").and_then(|v| v.as_str()) {
-                merged.translation.target_language = v.to_string();
+                merged.translation.target_language = v.chars().take(32).collect();
             }
         }
 

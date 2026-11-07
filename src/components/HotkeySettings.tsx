@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { type HotkeyValidationMessage, validateHotkey } from '@/lib/hotkey-utils'
+import { DEFAULT_HOTKEYS } from '@/shared/constants'
 import { HotkeyRecorder } from './HotkeyRecorder'
 
 interface HotkeyConfig {
@@ -20,15 +21,12 @@ interface HotkeySettingsProps {
   onChange: (value: HotkeyConfig) => void
 }
 
-// 渲染进程默认值，与 electron/shared/constants.ts 保持一致  后面配置到 constants.ts
-const getDefaultHotkeys = (): HotkeyConfig => {
-  const isMac = window.electronAPI?.platform === 'darwin'
-  return {
-    pttKey: isMac ? 'Alt' : 'Control+Shift+Space',
-    toggleSettings: isMac ? 'Command+Shift+,' : 'Control+Shift+,',
-    translateKey: isMac ? 'Command+Shift+T' : 'Control+Shift+T',
-  }
-}
+// 渲染进程默认值：直接取 shared/constants 的 DEFAULT_HOTKEYS，单一来源
+const getDefaultHotkeys = (): HotkeyConfig => ({
+  pttKey: DEFAULT_HOTKEYS.PTT,
+  toggleSettings: DEFAULT_HOTKEYS.SETTINGS,
+  translateKey: DEFAULT_HOTKEYS.TRANSLATE,
+})
 
 export function HotkeySettings({
   value: config,

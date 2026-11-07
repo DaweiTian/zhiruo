@@ -216,6 +216,9 @@ export default tseslint.config(
       '*.tsbuildinfo',
       '.vscode/',
       '.idea/',
+      // 浏览器 QA 快照/截图（playwright-cli 产物）
+      'output/',
+      '.playwright-cli/',
 
       // 系统文件
       '.DS_Store',

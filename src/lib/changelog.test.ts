@@ -113,4 +113,27 @@ some note`
     expect(html).toContain('&lt;script&gt;')
     expect(html).not.toContain('<script>alert(1)</script>')
   })
+
+  it('neutralizes raw HTML and quote injection anywhere in the body', () => {
+    const html = renderMarkdown('hello <img src=x onerror=alert(1)> "q" \'s\'')
+
+    expect(html).not.toContain('<img')
+    expect(html).toContain('&lt;img')
+    expect(html).toContain('&quot;q&quot;')
+    expect(html).toContain('&#39;s&#39;')
+  })
+
+  it('drops link targets that are not http(s)', () => {
+    const html = renderMarkdown('[x](javascript:alert(1))')
+
+    expect(html).not.toContain('href="javascript')
+    expect(html).toContain('x (javascript:alert(1))')
+  })
+
+  it('rejects fence language strings outside the identifier charset', () => {
+    const html = renderMarkdown('```ts" onmouseover="alert(1)\ncode\n```')
+
+    expect(html).not.toContain('onmouseover')
+    expect(html).toContain('<pre><code>')
+  })
 })

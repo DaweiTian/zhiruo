@@ -344,7 +344,7 @@ export function HUD() {
     holdActiveRef.current = false
     latchedRef.current = false
     dragRef.current = { ...dragRef.current, latched: false, startedLatched: false }
-    window.electronAPI.cancelSession()
+    window.electronAPI.cancelSession().catch(() => {})
   }
 
   /** 释放 pointer capture；失败时静默忽略（window 监听器仍可兜底）。 */

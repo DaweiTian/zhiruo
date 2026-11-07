@@ -28,6 +28,9 @@ function handleLinkClick(event: React.MouseEvent<HTMLDivElement>) {
   // 内部锚点保持默认行为，外链交由浏览器 / 系统处理
   if (href.startsWith('#')) return
 
+  // 仅放行 http(s)（renderMarkdown 已过滤，这里做纵深防御）
+  if (!/^https?:\/\//i.test(href)) return
+
   event.preventDefault()
 
   if (window.electronAPI?.openExternal) {

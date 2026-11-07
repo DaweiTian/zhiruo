@@ -87,10 +87,14 @@ function detectPlatform(): string {
 function listenAsync<T>(event: string, cb: (payload: T) => void): Unsub {
   let unlisten: UnlistenFn | null = null
   let cancelled = false
-  listen<T>(event, (e) => cb(e.payload)).then((fn) => {
-    if (cancelled) fn()
-    else unlisten = fn
-  })
+  listen<T>(event, (e) => cb(e.payload))
+    .then((fn) => {
+      if (cancelled) fn()
+      else unlisten = fn
+    })
+    .catch(() => {
+      /* 订阅失败（无宿主 / IPC 异常）不得成为 unhandledrejection */
+    })
   return () => {
     cancelled = true
     unlisten?.()
@@ -148,22 +152,27 @@ export const tauriApi = {
   onStartRecording: (cb: (payload: RecordingStartPayload) => void): Unsub =>
     listenAsync('start-recording', cb),
   onStopRecording: (cb: () => void): Unsub => listenAsync('stop-recording', () => cb()),
+  // fire-and-forget 通道：吞掉拒绝，避免 unhandledrejection 洪水
+  // （sendAudioLevel 在录音期每帧一发，见 log() 处的同类注释）
   sendAudioChunk: (payload: AudioChunkPayload) => {
+    // 显式取视图的 byteOffset/byteLength，避免把 TypedArray 的整段底层 buffer 序列化出去
+    const bytes =
+      payload.buffer instanceof ArrayBuffer
+        ? new Uint8Array(payload.buffer)
+        : new Uint8Array(
+            payload.buffer.buffer,
+            payload.buffer.byteOffset,
+            payload.buffer.byteLength,
+          )
     void invoke('send_audio_chunk', {
       payload: {
         sessionId: payload.sessionId,
         chunkIndex: payload.chunkIndex,
         isFinal: payload.isFinal,
         mimeType: payload.mimeType,
-        buffer: Array.from(
-          new Uint8Array(
-            payload.buffer instanceof ArrayBuffer
-              ? payload.buffer
-              : ((payload.buffer as ArrayBufferView).buffer as ArrayBuffer),
-          ),
-        ),
+        buffer: Array.from(bytes),
       },
-    })
+    }).catch(() => {})
   },
   sendStreamingAudioFrame: (payload: StreamingAudioFramePayload) => {
     void invoke('send_streaming_audio_frame', {
@@ -173,23 +182,23 @@ export const tauriApi = {
         sampleRate: payload.sampleRate,
         buffer: Array.from(new Uint8Array(payload.buffer)),
       },
-    })
+    }).catch(() => {})
   },
   sendStreamingAudioEnd: (payload: StreamingAudioEndPayload) => {
-    void invoke('send_streaming_audio_end', { payload })
+    void invoke('send_streaming_audio_end', { payload }).catch(() => {})
   },
   sendError: (error: string) => {
-    void invoke('send_error', { error })
+    void invoke('send_error', { error }).catch(() => {})
   },
   sendAudioLevel: (level: number) => {
-    void invoke('send_audio_level', { level })
+    void invoke('send_audio_level', { level }).catch(() => {})
   },
 
   onOverlayUpdate: (cb: (state: OverlayState) => void): Unsub => listenAsync('overlay-update', cb),
   onAudioLevel: (cb: (level: number) => void): Unsub => listenAsync('audio-level', cb),
 
   setIgnoreMouseEvents: (ignore: boolean) => {
-    void invoke('set_ignore_mouse_events', { ignore })
+    void invoke('set_ignore_mouse_events', { ignore }).catch(() => {})
   },
 
   // Overlay 窗口按内容尺寸缩放：渲染层测量胶囊实际尺寸后调用，Rust 侧
@@ -231,7 +240,12 @@ export const tauriApi = {
   getLogTail: (options?: LogTailOptions) => invoke<string>('get_log_tail', { options }),
   openLogFolder: () => invoke('open_log_folder'),
   log: (entry: LogEntryPayload) => {
-    void invoke('log', { entry })
+    // fire-and-forget：必须吞掉拒绝——浏览器预览（dev:vite，无 Tauri 宿主）下 invoke
+    // 必然拒绝，而丢弃的 rejected promise 会经 unhandledrejection → logger 的
+    // console 包装器再次写日志，形成无限刷屏循环。
+    void invoke('log', { entry }).catch(() => {
+      /* 日志通道不可用时静默降级 */
+    })
   },
 
   // storage root (portable `<exe_dir>\data` vs default `%APPDATA%\voice-key`)

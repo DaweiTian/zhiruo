@@ -20,8 +20,6 @@
     "core:window:allow-is-maximized",
     "core:event:default",
     "core:app:default",
-    "opener:default",
-    "shell:allow-open",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-read-text",
     "dialog:default",

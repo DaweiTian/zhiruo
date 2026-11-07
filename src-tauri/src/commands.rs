@@ -1464,11 +1464,13 @@ pub async fn test_refine_connection(
     config: Value,
 ) -> Result<llm::RefineConnectionResult, String> {
     if config.is_object() {
-        let payload = if config.get("llmRefine").is_some() {
-            config.clone()
-        } else {
-            serde_json::json!({ "llmRefine": config })
-        };
+        // 只合并 llmRefine 段：载荷整体 merge 会夹带 app/asr/hotkey 等任意段，
+        // 绕过 set_config 的热键 rebind / 回滚守卫。
+        let section = config.get("llmRefine").unwrap_or(&config);
+        if !section.is_object() {
+            return Err("llmRefine config must be an object".into());
+        }
+        let payload = serde_json::json!({ "llmRefine": section.clone() });
         state.config.merge(&payload)?;
     }
     let merged = state.config.load();
@@ -1782,23 +1784,28 @@ fn sanitize_log_message(message: &str) -> String {
     redact_api_key_tokens(&out)
 }
 
-/// Mask `sk-…` tokens (the key shape of every configured provider) at token
-/// boundaries, e.g. `sk-c2e5…` → `sk-***`. The boundary check keeps ordinary
+/// Mask API-key-shaped tokens at token boundaries (e.g. `sk-c2e5…` → `sk-***`).
+/// Covers the common provider key prefixes; the boundary check keeps ordinary
 /// words like `task-…` intact.
 fn redact_api_key_tokens(text: &str) -> String {
+    const KEY_PREFIXES: [&str; 13] = [
+        "sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "AIza", "AKIA", "ASIA",
+        "xoxb-", "xoxp-", "hf_",
+    ];
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
     while i < chars.len() {
         let at_token_start = i == 0 || !chars[i - 1].is_ascii_alphanumeric();
-        if at_token_start
-            && i + 3 <= chars.len()
-            && chars[i] == 's'
-            && chars[i + 1] == 'k'
-            && chars[i + 2] == '-'
-        {
-            out.push_str("sk-***");
-            i += 3;
+        let matched = at_token_start.then(|| {
+            KEY_PREFIXES
+                .iter()
+                .find(|prefix| prefix.chars().eq(chars[i..].iter().copied().take(prefix.len())))
+        });
+        if let Some(Some(prefix)) = matched {
+            out.push_str(prefix);
+            out.push_str("***");
+            i += prefix.chars().count();
             while i < chars.len()
                 && (chars[i].is_ascii_alphanumeric() || chars[i] == '-' || chars[i] == '_')
             {
@@ -2760,6 +2767,11 @@ mod tests {
             "key sk-*** failed"
         );
         assert_eq!(sanitize_log_message("task-name stays"), "task-name stays");
+        // 其他厂商 key 形态同样掩码
+        assert_eq!(
+            sanitize_log_message("pat ghp_ABC123 and AIzaXYZ789"),
+            "pat ghp_*** and AIza***"
+        );
     }
 
     /// The length cap keeps a hostile renderer from bloating the log file.

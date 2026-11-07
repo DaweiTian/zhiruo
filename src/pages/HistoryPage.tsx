@@ -109,11 +109,16 @@ export default function HistoryPage() {
     [locale, t],
   )
 
+  // 请求序守卫：并发 reload（转写事件触发）时旧响应不得覆盖新数据
+  const loadSeqRef = React.useRef(0)
+
   const loadHistory = React.useCallback(
     async (silent = false) => {
+      const seq = ++loadSeqRef.current
       try {
         if (!silent) setLoading(true)
         const data = await window.electronAPI.getHistory()
+        if (seq !== loadSeqRef.current) return
         setItems(data)
         setSelectedId((prev) => prev ?? data[0]?.id ?? null)
       } catch (error) {
@@ -582,7 +587,7 @@ function DetailPane({
           {formatTime(item.timestamp)}
         </div>
         <div className="mt-0.5 text-xs text-muted-foreground">
-          {dateLabel} 路 {weekday}
+          {dateLabel} · {weekday}
         </div>
       </div>
       <div className="vk-scroll overflow-y-auto px-5 py-4">

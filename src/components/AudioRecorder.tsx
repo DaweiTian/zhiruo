@@ -263,12 +263,12 @@ export function AudioRecorder() {
       const sessionId = currentSessionIdRef.current
       const chunkIndex = currentChunkIndexRef.current
       void (async () => {
-        await window.electronAPI.stopSession()
+        await window.electronAPI.stopSession().catch(() => {})
         if (sessionId) {
           sendEmptyChunkMarker(sessionId, chunkIndex, true)
         }
         releaseResources()
-      })()
+      })().catch(() => {})
       return
     }
 
@@ -283,7 +283,7 @@ export function AudioRecorder() {
     }
 
     mediaRecorder.onstop = () => {
-      void handleRecorderStop()
+      void handleRecorderStop().catch(() => {})
     }
 
     mediaRecorder.onerror = (event) => {
@@ -427,7 +427,7 @@ export function AudioRecorder() {
           if (isSessionEndingRef.current || currentSessionIdRef.current !== payload.sessionId)
             return
           console.warn('[Renderer] Microphone stream ended during recording')
-          void window.electronAPI.stopSession()
+          void window.electronAPI.stopSession().catch(() => {})
         }
       })
 
@@ -462,7 +462,7 @@ export function AudioRecorder() {
 
       sessionMaxTimerRef.current = setTimeout(() => {
         if (!isSessionEndingRef.current && currentSessionIdRef.current === payload.sessionId) {
-          void window.electronAPI.stopSession()
+          void window.electronAPI.stopSession().catch(() => {})
         }
       }, RECORDING.SESSION_MAX_DURATION_SECONDS * 1000)
     } catch (error) {
@@ -479,7 +479,7 @@ export function AudioRecorder() {
   const stopRecordingSession = () => {
     console.log('[Renderer] onStopRecording triggered')
     if (currentAsrModeRef.current === 'streaming') {
-      void finishStreamingCapture()
+      void finishStreamingCapture().catch(() => {})
       return
     }
     requestRecorderStop({

@@ -58,3 +58,7 @@ src-tauri/test.out
 
 # 本地调试截图
 tauri-*.png
+
+# 浏览器 QA 快照/截图
+.playwright-cli/
+output/

@@ -96,7 +96,10 @@ export default function HomePage() {
 
   useEffect(() => {
     let active = true
+    // 请求序守卫：并发 reload（转写事件触发）时旧响应不得覆盖新数据
+    let requestSeq = 0
     const loadData = async (showLoading = true) => {
+      const seq = ++requestSeq
       try {
         if (showLoading) setLoading(true)
         // 历史与累计统计并行取数；getStats 失败时保留 null，降级为纯历史聚合
@@ -107,7 +110,7 @@ export default function HomePage() {
             return null
           }),
         ])
-        if (active) {
+        if (active && seq === requestSeq) {
           setHistoryItems(data)
           setStoredStats(stored)
         }

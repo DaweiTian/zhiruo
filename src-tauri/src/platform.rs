@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -55,14 +54,4 @@ pub fn install_linux_integration() -> LinuxIntegrationStatus {
 
 pub fn remove_linux_integration() -> LinuxIntegrationStatus {
     linux_integration_status()
-}
-
-pub fn has_line_breaks(text: &str) -> bool {
-    text.contains('\n') || text.contains('\r')
-}
-
-/// Used for terminal detection heuristics on Linux (best-effort).
-pub fn run_cmd(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
-    String::from_utf8(output.stdout).ok()
 }

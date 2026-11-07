@@ -24,12 +24,12 @@ export function AccentSelector({ value, onChange }: AccentSelectorProps) {
             aria-label={t(option.nameKey)}
             onClick={() => onChange(option.id)}
             className={cn(
-              'no-drag flex min-w-[96px] max-w-[148px] flex-1 items-center gap-2.5 rounded-xl border bg-card p-2.5 text-left transition-all hover:border-primary/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+              'no-drag flex min-w-[108px] max-w-[148px] flex-1 items-center gap-2 rounded-xl border bg-card p-2.5 text-left transition-all hover:border-primary/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
               selected && 'border-primary ring-1 ring-primary',
             )}
           >
             <span
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border shadow-sm"
+              className="grid h-6 w-6 shrink-0 place-items-center rounded-full border shadow-sm"
               style={{
                 background: option.swatch,
                 borderColor: 'oklch(1 0 0 / 0.25)',

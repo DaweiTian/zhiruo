@@ -4,7 +4,7 @@
 //! 规则 + 用户词表，全部折叠进单次调用）；本模块只负责把它接进一次
 //! chat completion。旧常量 `REFINE_SYSTEM_PROMPT` 已删除，勿在此重建。
 
-use crate::config::{LLMRefineConfig, ProviderKeyConfig, STORED_SECRET_PLACEHOLDER};
+use crate::config::{LLMRefineConfig, STORED_SECRET_PLACEHOLDER};
 use crate::filler::FillerCleanupMode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -149,7 +149,7 @@ fn pick_key(provider_key: &str, fallback: &str) -> String {
     }
 }
 
-fn require_https_or_localhost(url: &str) -> Result<(), String> {
+pub(crate) fn require_https_or_localhost(url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("Invalid endpoint: {e}"))?;
     let host = parsed.host_str().unwrap_or("");
     let is_local = host == "localhost" || host == "127.0.0.1" || host == "::1";
@@ -286,10 +286,6 @@ pub async fn test_connection(config: &LLMRefineConfig) -> RefineConnectionResult
         },
         Err(message) => RefineConnectionResult { ok: false, message },
     }
-}
-
-pub fn normalize_provider_config(_raw: &ProviderKeyConfig) -> ProviderKeyConfig {
-    _raw.clone()
 }
 
 #[cfg(test)]

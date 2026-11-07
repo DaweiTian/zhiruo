@@ -12,10 +12,12 @@
     "view": "View changelog"
   },
   "theme": {
-    "light": "Light",
-    "dark": "Dark",
+    "scifi": "Sci-Fi",
+    "fresh": "Fresh",
+    "business": "Business",
     "accent": {
       "label": "Choose accent color",
+      "auto": "Auto",
       "gulfBlue": "Gulf Blue",
       "oliveGreen": "Olive Green",
       "lavaOrange": "Lava Orange",
@@ -112,8 +114,8 @@
     "descLogs": "For troubleshooting",
     "appearance": {
       "title": "Appearance",
-      "description": "Theme mode, accent color, and interface style",
-      "themeMode": "Theme mode",
+      "description": "Theme style, accent color, and overall look",
+      "themeStyle": "Theme style",
       "accentColor": "Accent color"
     },
     "connectionTitle": "Connection",

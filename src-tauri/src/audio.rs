@@ -10,6 +10,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// the two backstops fire for the same session length.
 pub const SESSION_MAX_DURATION_SECONDS: u64 = 5 * 60;
 
+/// 单个音频 chunk / 流式帧的字节上限与单会话累计上限。渲染层按不可信输入
+/// 对待，防异常载荷耗尽内存；5 分钟上限下 16k 单声道音频远低于该预算
+/// （float32 ≈ 19MB，经典 WAV ≈ 10MB）。
+pub const MAX_AUDIO_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_SESSION_AUDIO_BYTES: usize = 64 * 1024 * 1024;
+
 /// Whether a session that started at `started_at` (unix ms) has reached the
 /// maximum session duration as of `now` (unix ms). Pure so the watchdog's
 /// deadline decision is unit-testable.
@@ -84,6 +90,8 @@ pub struct AudioSession {
     /// (`session_time_limit_reached`) to re-validate the deadline before
     /// stopping an over-long session.
     pub started_at: u64,
+    /// 已接收音频字节累计（chunks + pcm），用于 `MAX_SESSION_AUDIO_BYTES` 护栏。
+    pub audio_bytes: usize,
 }
 
 pub fn now_ms() -> u64 {
@@ -106,6 +114,7 @@ impl AudioSession {
         self.streaming_final = false;
         self.final_chunk_seen = false;
         self.started_at = now_ms();
+        self.audio_bytes = 0;
         let mode = if streaming { "streaming" } else { "classic" };
         RecordingStartPayload {
             session_id: id,
@@ -132,6 +141,13 @@ impl AudioSession {
         {
             return false;
         }
+        // 字节护栏：单块上限 + 会话累计上限（渲染层载荷不可信）
+        if payload.buffer.len() > MAX_AUDIO_CHUNK_BYTES
+            || self.audio_bytes.saturating_add(payload.buffer.len()) > MAX_SESSION_AUDIO_BYTES
+        {
+            return false;
+        }
+        self.audio_bytes += payload.buffer.len();
         self.chunks.insert(payload.chunk_index, payload.buffer);
         if payload.is_final {
             self.final_chunk_seen = true;
@@ -145,6 +161,13 @@ impl AudioSession {
         {
             return false;
         }
+        // 字节护栏：单帧上限 + 会话累计上限（渲染层载荷不可信）
+        if payload.buffer.len() > MAX_AUDIO_CHUNK_BYTES
+            || self.audio_bytes.saturating_add(payload.buffer.len()) > MAX_SESSION_AUDIO_BYTES
+        {
+            return false;
+        }
+        self.audio_bytes += payload.buffer.len();
         // Float32 LE samples
         let mut samples = Vec::with_capacity(payload.buffer.len() / 4);
         for chunk in payload.buffer.chunks_exact(4) {
@@ -171,10 +194,6 @@ impl AudioSession {
     pub fn take_pcm_wav(&mut self) -> Vec<u8> {
         let samples = std::mem::take(&mut self.pcm);
         crate::asr::encode_wav_mono_f32(&samples, self.sample_rate)
-    }
-
-    pub fn has_audio(&self) -> bool {
-        !self.pcm.is_empty() || self.chunks.values().any(|c| !c.is_empty())
     }
 
     pub fn complete(&mut self, transcript: String) {

@@ -313,7 +313,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
     由 `open_main_window` 的 `route` 参数统一落位）。
     `log` 命令为 `voice-key.log` 的权威写入口，**阈值 WARN**：仅 `warn`/`error`
     入文件，`debug`/`info` 一律丢弃（渲染层 logger 同阈值，但以本命令为最终闸门）。
-    `set_config` 在 rebind 失败时回滚
+    `set_config` 成功后广播 `config-updated`（脱敏配置），后台录音窗即时
+    启停麦克风保温管线；`set_config` 在 rebind 失败时回滚
     快捷键并返回 `{ config, hotkeyRolledBack }`（渲染层据此覆盖 hotkey 状态清除
     dirty），并即时应用 `mouse.middleClickPtt`（`mouse.rs` 中键分支门控；钩子本体
     常驻，hover 穿透不受影响）；
@@ -430,7 +431,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   展开；窗口生命周期归 `windowing::ensure_hub_window`（隐藏 / 重建，绝不销毁）。
   收起 = 渲染层背景点击 / 右键、结果卡片关闭按钮、替换成功延时收起、Windows
   `mouse.rs` 点外收起（`is_open` 供其门禁）。
-- `src/config.rs` - 配置存储（`voice-key-config.json`）。**配置写入线程安全**：
+- `src/config.rs` - 配置存储（`voice-key-config.json`）。ASR 段含
+  `micKeepAlive`（麦克风保温，默认开）等录音行为开关。**配置写入线程安全**：
   所有写入口（`merge`：`set_config` 及其快捷键回滚、`test_refine_connection`、
   `set_app_language`、overlay 显隐 flag / 拖拽位置持久化）的
   load → mutate → save 全程持进程级 `CONFIG_LOCK`（与 `stats.rs` 的 `STATS_LOCK`

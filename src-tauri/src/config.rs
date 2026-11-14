@@ -100,6 +100,11 @@ pub struct MouseConfig {
 pub struct ASRConfig {
     #[serde(default = "default_true")]
     pub low_volume_mode: bool,
+    /// 麦克风保温：录音结束后不释放麦克风与音频管线，下一次按键立即
+    /// 进入最佳收音状态（消除冷启动的头几秒丢字）。默认开启；关闭后
+    /// 每次录音重新打开麦克风。
+    #[serde(default = "default_true")]
+    pub mic_keep_alive: bool,
     #[serde(default)]
     pub microphone_device_id: String,
     #[serde(default)]
@@ -145,6 +150,7 @@ impl Default for ASRConfig {
     fn default() -> Self {
         Self {
             low_volume_mode: true,
+            mic_keep_alive: true,
             microphone_device_id: String::new(),
             microphone_device_label: String::new(),
             cloud_endpoint: String::new(),
@@ -744,6 +750,9 @@ impl ConfigStore {
                 if let Some(v) = obj.get("lowVolumeMode").and_then(|v| v.as_bool()) {
                     merged.asr.low_volume_mode = v;
                 }
+                if let Some(v) = obj.get("micKeepAlive").and_then(|v| v.as_bool()) {
+                    merged.asr.mic_keep_alive = v;
+                }
                 if let Some(v) = obj.get("microphoneDeviceId").and_then(|v| v.as_str()) {
                     merged.asr.microphone_device_id = v.chars().take(256).collect();
                 }
@@ -940,6 +949,38 @@ mod tests {
         assert_eq!(normalize_filler_cleanup("rules").as_deref(), Some("rules"));
         assert_eq!(normalize_filler_cleanup("llm").as_deref(), Some("llm"));
         assert_eq!(normalize_filler_cleanup("drop-everything"), None);
+    }
+
+    /// 麦克风保温开关：默认开启，micKeepAlive 补丁可关可开，未提及该字段的
+    /// 补丁绝不改写已存值（与 lowVolumeMode 同款字段级合并语义）。
+    #[test]
+    fn asr_mic_keep_alive_merges_and_defaults_to_on() {
+        let root = temp_root("keep-alive");
+        let store = ConfigStore {
+            path: root.join("voice-key-config.json"),
+        };
+
+        // 老配置没有该字段 → 反序列化默认 true。
+        let merged = store.merge(&serde_json::json!({})).unwrap();
+        assert!(merged.asr.mic_keep_alive);
+
+        let merged = store
+            .merge(&serde_json::json!({ "asr": { "micKeepAlive": false } }))
+            .unwrap();
+        assert!(!merged.asr.mic_keep_alive);
+
+        // 未提及的补丁保留已存值。
+        let merged = store
+            .merge(&serde_json::json!({ "asr": { "lowVolumeMode": true } }))
+            .unwrap();
+        assert!(!merged.asr.mic_keep_alive);
+
+        let merged = store
+            .merge(&serde_json::json!({ "asr": { "micKeepAlive": true } }))
+            .unwrap();
+        assert!(merged.asr.mic_keep_alive);
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     // ---- storage root / one-click migration --------------------------------

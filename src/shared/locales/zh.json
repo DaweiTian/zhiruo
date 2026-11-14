@@ -240,6 +240,8 @@
     "testRefineConnection": "测试连接",
     "testingRefineConnection": "正在测试连接...",
     "durationWarning": "单次录音最长 5 分钟。",
+    "micKeepAlive": "麦克风保温",
+    "micKeepAliveHelp": "启动后保持麦克风与音频管线就绪，按下快捷键立即以最佳灵敏度收音，消除开头几秒的收音延迟（电池模式下尤其明显）。开启期间系统会显示麦克风使用中；不录音时音频仅丢弃、不上传。关闭后每次录音重新打开麦克风。",
     "lowVolumeMode": "低音量模式",
     "lowVolumeModeHelp": "适合相对安静的咖啡店或办公室，想轻声语音输入时使用。会放大说话声，也可能放大环境噪音。",
     "mouse": {

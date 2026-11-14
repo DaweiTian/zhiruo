@@ -22,6 +22,8 @@ React 组件目录，包含应用级组件与 `ui/` 组件库。
 后台无头录音组件，负责：
 
 - 监听主进程的录音开始/停止事件。
+- **麦克风保温（`asr.micKeepAlive`，默认开）**：启动/配置变更时预热并跨会话保留`MediaStream` / `AudioContext` / Worklet 管线，下次按键零延迟进入最佳收音（消除冷启动头几秒丢字，电池模式下尤其明显）；关闭则回到每次会话冷启动。会话结束只重置会话态，管线按保温开关决定去留。
+- 显式关闭浏览器 AGC / 降噪 / 回声消除（三者均有自适应爬坡），响度由`lowVolumeMode` 固定增益节点决定，首帧即最终增益。
 - 在单次会话内保持同一条 `MediaStream` 与 `AudioContext`。
 - 经典模式每 30 秒轮转一次 `MediaRecorder` 并发送独立音频 `chunk`。
 - 流式模式通过 AudioWorklet 每约 100 ms 发送 Float32 PCM；停止时先 flush 最后一帧再发送 final marker。

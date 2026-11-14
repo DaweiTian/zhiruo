@@ -177,6 +177,7 @@ export function normalizeRendererConfig(loadedConfig: AppConfig): AppConfig {
     asr: {
       ...loadedConfig.asr,
       lowVolumeMode: loadedConfig.asr?.lowVolumeMode ?? true,
+      micKeepAlive: loadedConfig.asr?.micKeepAlive ?? true,
       microphoneDeviceId: loadedConfig.asr?.microphoneDeviceId ?? '',
       microphoneDeviceLabel: loadedConfig.asr?.microphoneDeviceLabel ?? '',
       cloudPreset: loadedConfig.asr?.cloudPreset || DEFAULT_CLOUD_PRESET,

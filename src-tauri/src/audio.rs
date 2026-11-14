@@ -63,6 +63,8 @@ pub struct RecordingStartPayload {
     pub asr_mode: String,
     pub microphone_device_id: Option<String>,
     pub low_volume_mode: bool,
+    /// 麦克风保温：渲染层据此决定会话结束后是否保留麦克风与音频管线。
+    pub mic_keep_alive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
@@ -122,6 +124,7 @@ impl AudioSession {
             asr_mode: mode.into(),
             microphone_device_id: None,
             low_volume_mode: true,
+            mic_keep_alive: true,
         }
     }
 

@@ -18,6 +18,8 @@ export type CloudDialect = 'chat_asr_data_url' | 'chat_openai_audio' | 'openai_t
 
 export interface ASRConfig {
   lowVolumeMode?: boolean
+  /** 麦克风保温：录音结束后保留麦克风与音频管线，消除下一次录音冷启动的头几秒丢字。 */
+  micKeepAlive?: boolean
   microphoneDeviceId?: string
   microphoneDeviceLabel?: string
   /** Cloud ASR endpoint (optional; falls back to the LLM MiMo endpoint). */
@@ -244,6 +246,8 @@ export interface RecordingStartPayload {
   microphoneDeviceId?: string
   asrMode: ASRMode
   lowVolumeMode?: boolean
+  /** 麦克风保温开关（会话结束是否保留麦克风管线），由 Rust 侧配置下发。 */
+  micKeepAlive?: boolean
 }
 
 export interface AudioChunkPayload {

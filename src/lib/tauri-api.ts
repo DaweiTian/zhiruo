@@ -27,6 +27,7 @@ export interface RecordingStartPayload extends SharedRecordingStartPayload {
   mode?: string
   microphoneDeviceId?: string
   lowVolumeMode?: boolean
+  micKeepAlive?: boolean
 }
 
 export interface AudioChunkPayload {
@@ -118,6 +119,9 @@ export const tauriApi = {
   getAppLanguage: () => invoke<LanguageSnapshot>('get_app_language'),
   onAppLanguageChanged: (cb: (snapshot: LanguageSnapshot) => void): Unsub =>
     listenAsync('app-language-changed', cb),
+  // set_config 成功后由 Rust 广播（脱敏配置）：后台录音窗据此即时启停
+  // 麦克风保温管线、跟随麦克风设备切换，不等下一次会话才生效。
+  onConfigUpdated: (cb: (config: AppConfig) => void): Unsub => listenAsync('config-updated', cb),
   getLinuxIntegrationStatus: () => invoke<LinuxIntegrationStatus>('get_linux_integration_status'),
   installLinuxIntegration: () => invoke<LinuxIntegrationStatus>('install_linux_integration'),
   removeLinuxIntegration: () => invoke<LinuxIntegrationStatus>('remove_linux_integration'),

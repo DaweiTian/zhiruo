@@ -123,6 +123,7 @@ function isAppPreferencesDirty(current: AppConfig['app'], original: AppConfig['a
 function isAsrConfigDirty(current: AppConfig['asr'], original: AppConfig['asr']): boolean {
   return (
     (current.lowVolumeMode ?? true) !== (original.lowVolumeMode ?? true) ||
+    (current.micKeepAlive ?? true) !== (original.micKeepAlive ?? true) ||
     (current.microphoneDeviceId ?? '') !== (original.microphoneDeviceId ?? '') ||
     (current.microphoneDeviceLabel ?? '') !== (original.microphoneDeviceLabel ?? '') ||
     (current.cloudPreset ?? 'mimo') !== (original.cloudPreset ?? 'mimo') ||
@@ -326,6 +327,7 @@ export default function SettingsPage() {
     },
     asr: {
       lowVolumeMode: true,
+      micKeepAlive: true,
       microphoneDeviceId: '',
       microphoneDeviceLabel: '',
     },
@@ -1888,7 +1890,15 @@ export default function SettingsPage() {
               {t('settings.durationWarning')}
             </div>
 
-            <div className="mt-4 border-t pt-4">
+            <div className="mt-4 space-y-4 border-t pt-4">
+              <ToggleRow
+                title={t('settings.micKeepAlive')}
+                desc={t('settings.micKeepAliveHelp')}
+                checked={config.asr.micKeepAlive ?? true}
+                onChange={(checked) =>
+                  setConfig((prev) => ({ ...prev, asr: { ...prev.asr, micKeepAlive: checked } }))
+                }
+              />
               <ToggleRow
                 title={t('settings.lowVolumeMode')}
                 desc={t('settings.lowVolumeModeHelp')}

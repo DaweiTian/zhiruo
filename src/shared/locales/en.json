@@ -240,6 +240,8 @@
     "testRefineConnection": "Test Connection",
     "testingRefineConnection": "Testing connection...",
     "durationWarning": "Each recording can last up to 5 minutes.",
+    "micKeepAlive": "Keep microphone warm",
+    "micKeepAliveHelp": "Keeps the microphone and audio pipeline ready after launch so every recording starts at full sensitivity immediately — no more losing the first words to startup delay (most noticeable on battery). The system mic-in-use indicator stays on while enabled; audio outside recordings is discarded, never uploaded. When off, the mic is reopened for each recording.",
     "lowVolumeMode": "Low-volume mode",
     "lowVolumeModeHelp": "For speaking softly in a relatively quiet café or office. Boosts your voice, but may also boost background noise.",
     "mouse": {

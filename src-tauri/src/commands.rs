@@ -1308,6 +1308,7 @@ pub fn start_session_internal<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<V
         Some(config.asr.microphone_device_id.clone())
     };
     payload.low_volume_mode = config.asr.low_volume_mode;
+    payload.mic_keep_alive = config.asr.mic_keep_alive;
     // asrMode: 'streaming' routes AudioRecorder to PCM worklet (best for cloud ASR).
     payload.asr_mode = "streaming".into();
     let _ = app.emit("start-recording", &payload);
@@ -1450,8 +1451,12 @@ pub fn set_config(
             serde_json::json!({ "message": format!("快捷键不受支持，已恢复为原设置：{err}") }),
         );
     }
+    // 广播配置变更（脱敏）：后台录音窗据此即时启停麦克风保温管线、
+    // 跟随麦克风设备切换，不等下一次会话才生效。
+    let masked = state.config.load_masked();
+    let _ = app.emit("config-updated", &masked);
     Ok(SetConfigResult {
-        config: state.config.load_masked(),
+        config: masked,
         hotkey_rolled_back,
     })
 }

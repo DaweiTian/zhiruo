@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.8.2](https://github.com/DaweiTian/zhiruo/compare/v0.8.1...v0.8.2) (2026-11-14)
+
+### Features
+
+- **audio:** 麦克风保温（`asr.micKeepAlive`，默认开）——启动即预热、会话结束保留麦克风与音频管线，下次按键零延迟进入最佳收音，消除开头几秒丢字（电池模式下尤其明显）；设置页可关，关闭即回到每次会话冷启动
+- **audio:** getUserMedia 显式关闭 AGC / 降噪 / 回声消除（三者均有自适应爬坡，冷启动头几秒增益偏低），响度改由「低音量模式」固定增益决定，首帧即最终增益
+
+### Bug Fixes
+
+- **hub:** 未检测到选区不再显示「未检测到选区」字样——空态仅保留只读圆环（用户拍板）
+
+### Notes
+
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.8.1](https://github.com/DaweiTian/zhiruo/compare/v0.8.0...v0.8.1) (2026-11-07)
 
 ### Features

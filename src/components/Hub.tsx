@@ -150,8 +150,9 @@ export function Hub() {
     switch (state.status) {
       case 'capturing':
         return t('hub.capturing')
+      // empty：无选区时圆环已只读，不再显示「未检测到选区」字样（用户拍板）。
       case 'empty':
-        return t('hub.noSelection')
+        return ''
       case 'processing':
         return t('hub.processing')
       case 'done':
@@ -173,8 +174,8 @@ export function Hub() {
         close()
       }}
     >
-      {/* 浮动信息（top / bottom 自适应）：capturing / empty / processing /
-          done / error 状态文字与 ready 选区预览。环心偏上时翻到窗口下半——
+      {/* 浮动信息（top / bottom 自适应）：capturing / processing /
+          done / error 状态文字与 ready 选区预览（empty 不显示文字）。环心偏上时翻到窗口下半——
           窗口整只在屏内，文字换行而非截断，贴边也完整可读。 */}
       <div
         className={cn(

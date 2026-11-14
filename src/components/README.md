@@ -60,7 +60,7 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 ### `Hub.tsx`
 
-`hub` 窗口（`App.tsx` 按 window label 路由）的**选区快捷动作面板**：右键常驻胶囊弹出的圆环动作面板（翻译 / 润色 / 解释三扇区，几何见 `lib/hub-geometry.ts`）。**窗体透明**（`html.overlay-html` 撤掉 body 主题底色）：只画半透明圆弧扇区（下方内容透得出来）与其上的浮动信息，不压纯色黑底；WebView2 默认右键菜单（黑底矩形面板）被抑制，右键 = 收起。窗口整只钳在屏幕工作区内、圆环不居中——`hub-update` 载荷里的 `ringCenter`（环心相对窗口的 CSS px 偏移）把圆环 SVG 平移到胶囊中心（**偏移 SVG 定位而非平移 viewBox**——viewBox 平移方向与期望相反，会把圆环画到窗口对侧）；半环判定 = 吸附态 `dockEdge` 优先，未吸附但环心距窗口边不足外半径（贴近屏幕边缘）由 `edgeFromRingCenter` 兜底推导，同样只朝屏幕内展开半环。状态文字 / 选区预览 / 结果卡片因此贴边也**完整可见**，环心偏上时文字翻到窗口下半、长文案换行不截断。状态流由 Rust `hub-update` 驱动（capturing → ready / empty / error → processing → done / result）；仅 ready 态扇区可点，hover 动效（放大弹出 + 主色提亮 + 辉光，`index.css` `.hub-sector`）挂 CSS `:hover`，非 ready 态 `pointer-events: none` 天然不触发。收起路径：点扇区外任意处（含右键）、结果卡片关闭按钮、替换成功后的延时收起、以及 Windows `mouse.rs` 全局钩子的点外点击收起（hub 非激活窗口收不到 blur）。
+`hub` 窗口（`App.tsx` 按 window label 路由）的**选区快捷动作面板**：右键常驻胶囊弹出的圆环动作面板（翻译 / 润色 / 解释三扇区，几何见 `lib/hub-geometry.ts`）。**窗体透明**（`html.overlay-html` 撤掉 body 主题底色）：只画半透明圆弧扇区（下方内容透得出来）与其上的浮动信息，不压纯色黑底；WebView2 默认右键菜单（黑底矩形面板）被抑制，右键 = 收起。窗口整只钳在屏幕工作区内、圆环不居中——`hub-update` 载荷里的 `ringCenter`（环心相对窗口的 CSS px 偏移）把圆环 SVG 平移到胶囊中心（**偏移 SVG 定位而非平移 viewBox**——viewBox 平移方向与期望相反，会把圆环画到窗口对侧）；半环判定 = 吸附态 `dockEdge` 优先，未吸附但环心距窗口边不足外半径（贴近屏幕边缘）由 `edgeFromRingCenter` 兜底推导，同样只朝屏幕内展开半环。状态文字 / 选区预览 / 结果卡片因此贴边也**完整可见**，环心偏上时文字翻到窗口下半、长文案换行不截断。状态流由 Rust `hub-update` 驱动（capturing → ready / empty / error → processing → done / result；empty 不显示状态文字，仅只读圆环）；仅 ready 态扇区可点，hover 动效（放大弹出 + 主色提亮 + 辉光，`index.css` `.hub-sector`）挂 CSS `:hover`，非 ready 态 `pointer-events: none` 天然不触发。收起路径：点扇区外任意处（含右键）、结果卡片关闭按钮、替换成功后的延时收起、以及 Windows `mouse.rs` 全局钩子的点外点击收起（hub 非激活窗口收不到 blur）。
 
 ### `SessionHUD.tsx`
 

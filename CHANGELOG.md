@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.9.0](https://github.com/DaweiTian/zhiruo/compare/v0.8.2...v0.9.0) (2026-11-17)
+
+### Features
+
+- **picker:** 快速插入面板（鼠标侧键 X1/X2 单击唤出）——自建最近剪贴板环形缓冲（只存文本，单条 10 KB、默认 30 条可配 5–100，自写抑制不计自产自销，本地 `voice-key-clipboard.json` 不上云不进日志，设置页一键清空）+ 常用词双来源（手动管理 100 条 × 64 字符，历史 n-gram 候选人工确认才入库，按最近使用排序）；面板贴鼠标指针弹出（约 320×380，整只钳进工作区），方向键 + Enter 键盘速选、Esc / 点外 / 再按侧键收起，点选注入到当前光标（插入前把焦点还给先前应用）
+- **picker:** 侧键 X1/X2 全接管（单击即开、开关语义 toggle；浏览器前进/后退随之失效，设置可关、关掉即恢复默认行为）；X1/X2 落点可配（常用词 / 最近剪贴板 / 全部显示），设置页含剪贴板采集总开关、条数上限与常用词编辑（仅 Windows，非 Windows 侧键空桩并隐藏设置项）
+
+### Bug Fixes
+
+- **picker:** 侧键设置改动不会自动保存——自动保存触发门漏了 picker 脏检查，仅改侧键 / 常用词 / 剪贴板设置时改动被静默丢弃（高危）
+- **picker:** 面板会话加代际守卫（开/关 + 前台快照 + 落点一把小锁）——插入延迟期间「点外收起 → 侧键重开」不再被陈旧收尾误藏刚重开的面板，前台快照不再串代（否则 Ctrl/V 会打进面板自己）；启动时独立线程预创建面板窗口，首次唤出不再阻塞 mouse 串行 worker（中键 PTT 弹跳窗 / Disable 立停时序回归）
+- **config:** `userSnippets` / `clipboardLimit` 宽容反序列化——手工编辑出非法值（负数 / 字符串 / 坏条目）不再让整份配置解析失败被整体回退（API key 等全部设置被清的隐患）
+- **clipboard:** 存储改原子写（tmp + rename）防半截文件，损坏 JSON 留 `.bak` 保数据；自写抑制改**写入前**登记（消除 `WM_CLIPBOARDUPDATE` 异步通知的抢先窗口，哨兵 / 注入文本不再可能混入历史）；剪贴板被占用期间的复制失败补采一次
+- **picker:** 注入失败给出可见提示（文本已留剪贴板可手动粘贴）而非静默；清空剪贴板后面板即时刷新；历史候选确认先冲刷未保存草稿、不再覆盖正在输入的常用词；空剪贴板落点退回首条；相对时间标签走 i18n（刚刚 / N 分钟前 / …）
+
+### Notes
+
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.8.2](https://github.com/DaweiTian/zhiruo/compare/v0.8.1...v0.8.2) (2026-11-14)
 
 ### Features

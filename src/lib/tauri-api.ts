@@ -81,6 +81,23 @@ export interface HubUpdatePayload {
   message?: string
 }
 
+/** 最近剪贴板条目（自建环形缓冲，最新在前）。 */
+export interface PickerClipboardEntry {
+  text: string
+  /** Unix 毫秒。 */
+  timestamp: number
+}
+
+/** 快速插入面板数据（`picker-update` 事件 / `get_picker_data` 返回同形）。 */
+export interface PickerUpdatePayload {
+  /** 打开面板的侧键落点：X1/X2 默认区域。 */
+  focus?: 'snippets' | 'clipboard' | 'both'
+  /** 常用词（`picker.userSnippets`，面板按最近使用排序）。 */
+  snippets?: string[]
+  /** 最近剪贴板（最新在前）。 */
+  clipboard?: PickerClipboardEntry[]
+}
+
 type Unsub = () => void
 
 function detectPlatform(): string {
@@ -279,6 +296,19 @@ export const tauriApi = {
   runSelectionHubAction: (action: string) => invoke('run_selection_hub_action', { action }),
   copyText: (text: string) => invoke('copy_text', { text }),
   onHubUpdate: (cb: (payload: HubUpdatePayload) => void): Unsub => listenAsync('hub-update', cb),
+
+  // Quick-insert picker (mouse side buttons X1/X2).
+  // `picker-update` 可能先于渲染层监听器到达（面板首开竞态），挂载时拉
+  // 一份 `getPickerData` 兜底。
+  getPickerData: () => invoke<PickerUpdatePayload>('get_picker_data'),
+  closePickerPanel: () => invoke('close_picker_panel'),
+  pickerInsert: (text: string) => invoke('picker_insert', { text }),
+  onPickerUpdate: (cb: (payload: PickerUpdatePayload) => void): Unsub =>
+    listenAsync('picker-update', cb),
+  getSnippetCandidates: () => invoke<string[]>('get_snippet_candidates'),
+  confirmSnippetCandidate: (text: string) =>
+    invoke<string[]>('confirm_snippet_candidate', { text }),
+  clearClipboardHistory: () => invoke('clear_clipboard_history'),
 }
 
 export type ElectronAPI = typeof tauriApi

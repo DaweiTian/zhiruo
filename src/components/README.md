@@ -62,6 +62,10 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 `hub` 窗口（`App.tsx` 按 window label 路由）的**选区快捷动作面板**：右键常驻胶囊弹出的圆环动作面板（翻译 / 润色 / 解释三扇区，几何见 `lib/hub-geometry.ts`）。**窗体透明**（`html.overlay-html` 撤掉 body 主题底色）：只画半透明圆弧扇区（下方内容透得出来）与其上的浮动信息，不压纯色黑底；WebView2 默认右键菜单（黑底矩形面板）被抑制，右键 = 收起。窗口整只钳在屏幕工作区内、圆环不居中——`hub-update` 载荷里的 `ringCenter`（环心相对窗口的 CSS px 偏移）把圆环 SVG 平移到胶囊中心（**偏移 SVG 定位而非平移 viewBox**——viewBox 平移方向与期望相反，会把圆环画到窗口对侧）；半环判定 = 吸附态 `dockEdge` 优先，未吸附但环心距窗口边不足外半径（贴近屏幕边缘）由 `edgeFromRingCenter` 兜底推导，同样只朝屏幕内展开半环。状态文字 / 选区预览 / 结果卡片因此贴边也**完整可见**，环心偏上时文字翻到窗口下半、长文案换行不截断。状态流由 Rust `hub-update` 驱动（capturing → ready / empty / error → processing → done / result；empty 不显示状态文字，仅只读圆环）；仅 ready 态扇区可点，hover 动效（放大弹出 + 主色提亮 + 辉光，`index.css` `.hub-sector`）挂 CSS `:hover`，非 ready 态 `pointer-events: none` 天然不触发。收起路径：点扇区外任意处（含右键）、结果卡片关闭按钮、替换成功后的延时收起、以及 Windows `mouse.rs` 全局钩子的点外点击收起（hub 非激活窗口收不到 blur）。
 
+### `Picker.tsx`
+
+`picker` 窗口（`App.tsx` 按 window label 路由）的**快速插入面板**：鼠标侧键 X1/X2 单击弹出（再按一次收起，`mouse.rs` 钩子 toggle），点选/键盘速选注入到当前光标。上下两区：常用词（置顶常用项，按 localStorage 使用计数 `voicekey.picker.usage` 排序）/ 最近剪贴板（最新在前，带相对时间标签）；方向键 + Enter 速选、Esc 收起（点外 / 侧键收起走钩子）。落点（X1 → 常用词区 / X2 → 剪贴板区 / `both`）决定初始选中项。数据流：Rust `picker-update` 推送 + 挂载 `getPickerData` 拉取兜底（面板首开时事件可能先于监听器到达）；点选 → `pickerInsert`（Rust 先还焦点给先前应用再走 `inject_text`，否则 Ctrl/V 会打进面板自己），插入后收起。窗体透明（`overlay-html`），面板本体是圆角深色卡片。
+
 ### `SessionHUD.tsx`
 
 `session` 窗口（`App.tsx` 按 window label 路由）的**会话态胶囊**：0.5.6 与 overlay 待机胶囊解耦，固定渲染在屏幕下方居中的独立透明窗口里。承载录音（268×52 深色玻璃胶囊：琥珀麦克风呼吸圆章 + 无流式文本时的迷你波形 / 流式文本单行截断 + 尾部弱化 + 流光光标）、处理（阶段色转圈圆章：转写 / 精修 / 翻译）、成功（绿勾 + 转写预览）、错误（红叉 + 错误文案）与取消按钮。视觉 / 交互与拆分前 overlay 会话态胶囊基本一致，并补了内容层动效：session 窗 show 时大胶囊从 `opacity-0 scale-[0.93] translate-y-1.5` 淡入 / 微升（200ms、约 75ms 延迟起步，幅度被 280×64 窗口余量钳制），`recording` / `processing` / `success` / `error` 状态圆章切换时统一套用 `hud-pop` 弹性出现，与成功 / 错误态原有动画保持家族一致。

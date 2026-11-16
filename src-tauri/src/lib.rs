@@ -1,5 +1,6 @@
 mod asr;
 mod audio;
+mod clipboard;
 mod commands;
 mod config;
 mod filler;
@@ -9,6 +10,7 @@ mod hub;
 mod inject;
 mod llm;
 mod mouse;
+mod picker;
 mod platform;
 mod refine_prompt;
 #[cfg(test)]
@@ -201,8 +203,14 @@ pub fn run() {
             // Middle mouse button push-to-talk (Windows only; no-op elsewhere).
             // The hook installs / removes itself as the setting flips.
             mouse::init(app.handle());
-            mouse::set_middle_click_ptt(
-                app.state::<AppState>().config.load().mouse.middle_click_ptt,
+            let config = app.state::<AppState>().config.load();
+            mouse::set_middle_click_ptt(config.mouse.middle_click_ptt);
+            // 快速插入面板：侧键 X1/X2 接管 + 最近剪贴板采集（Windows 钩子 /
+            // 跨平台轮询）。
+            mouse::set_picker_side_buttons(config.picker.enabled);
+            clipboard::init(
+                config.picker.clipboard_enabled,
+                config.picker.clipboard_limit,
             );
             // The HUD capsule is an always-on standby launcher now. The show
             // path re-applies the Windows hardening around `show()` and honors
@@ -255,6 +263,12 @@ pub fn run() {
             commands::close_selection_hub,
             commands::run_selection_hub_action,
             commands::copy_text,
+            commands::get_picker_data,
+            commands::close_picker_panel,
+            commands::picker_insert,
+            commands::get_snippet_candidates,
+            commands::confirm_snippet_candidate,
+            commands::clear_clipboard_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Zhiruo");

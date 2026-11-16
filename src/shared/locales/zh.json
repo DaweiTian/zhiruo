@@ -250,6 +250,31 @@
       "middleClickPtt": "中键按住说话（Push-to-Talk）",
       "middleClickPttHelp": "开启后按下鼠标中键开始录音，松开停止并发送。注意：本功能不吞按键，依赖中键的应用（如部分终端的中键粘贴）仍会收到点击，可能与录音同时发生。"
     },
+    "picker": {
+      "title": "快速插入面板",
+      "description": "鼠标侧键 X1/X2 单击弹出，点选常用词或最近剪贴板插入到当前光标（仅 Windows）",
+      "enabled": "启用侧键快速插入",
+      "enabledHelp": "开启后 X1/X2 被接管（浏览器前进/后退将失效），单击弹出面板，再按一次收起。关闭后侧键恢复默认行为。",
+      "x1Action": "侧键 X1 落点",
+      "x2Action": "侧键 X2 落点",
+      "actionSnippets": "常用词",
+      "actionClipboard": "最近剪贴板",
+      "actionBoth": "全部显示",
+      "clipboardEnabled": "启用剪贴板采集",
+      "clipboardEnabledHelp": "在本地保存最近复制的文字（只存文本，不上云、不进日志）。注意：剪贴板可能含密码等敏感内容，可随时一键清空或关闭采集。",
+      "clipboardLimit": "剪贴板条数上限",
+      "clearClipboard": "一键清空剪贴板",
+      "clipboardCleared": "最近剪贴板已清空",
+      "clipboardClearFailed": "清空失败，请重试",
+      "learnSnippets": "从历史学习常用词",
+      "learnSnippetsHelp": "扫描转写历史中反复出现的短语，生成候选供你确认加入常用词（不会自动入库）。",
+      "userSnippets": "常用词",
+      "userSnippetsHelp": "每行一条（称呼、落款、术语），最多 100 条 × 64 字符。面板里按最近使用排序。",
+      "userSnippetsPlaceholder": "张伟\n此致敬礼\nBest regards",
+      "candidates": "学到的候选",
+      "candidatesHelp": "点击加入常用词；不需要的忽略即可。",
+      "candidateAddFailed": "加入失败，请重试"
+    },
     "microphone": {
       "label": "麦克风",
       "placeholder": "选择麦克风",
@@ -446,6 +471,13 @@
     "copied": "已复制",
     "close": "关闭",
     "error": "处理失败"
+  },
+  "picker": {
+    "snippets": "常用词",
+    "clipboard": "最近剪贴板",
+    "emptySnippets": "暂无常用词。可在设置里手动添加，或开启「从历史学习」。",
+    "emptyClipboard": "暂无最近复制。复制文字后会出现在这里。",
+    "hint": "↑↓ 选择 · Enter 插入 · Esc 收起"
   },
   "tray": {
     "settings": "设置",

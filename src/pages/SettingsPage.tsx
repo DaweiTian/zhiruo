@@ -53,6 +53,8 @@ import type {
   LLMRefineConfig,
   LLMProvider,
   LinuxIntegrationStatus,
+  PickerConfig,
+  PickerFocusAction,
   StorageStatus,
   TranslationConfig,
   UpdateInfo,
@@ -85,6 +87,7 @@ import {
   isRefineConfigComplete,
   isRefineConnectionCacheFresh,
   markRefineConnectionValidated,
+  normalizePickerConfig,
   normalizeRendererConfig,
   reconcileRefineFeaturesAfterConnectionChange,
   resolveMicrophoneDeviceMigration,
@@ -163,6 +166,13 @@ function isMouseConfigDirty(current: AppConfig['mouse'], original: AppConfig['mo
   return (current?.middleClickPtt ?? false) !== (original?.middleClickPtt ?? false)
 }
 
+function isPickerConfigDirty(current: AppConfig['picker'], original: AppConfig['picker']): boolean {
+  return (
+    JSON.stringify(normalizePickerConfig(current)) !==
+    JSON.stringify(normalizePickerConfig(original))
+  )
+}
+
 /**
  * A stored API key is shown as a selectable placeholder. If the user inserts text without
  * replacing the whole selection (paste/mid-string caret), the placeholder plus the new text would
@@ -191,6 +201,9 @@ function mergeConfigPatch(config: AppConfig, patch: Partial<AppConfig>): AppConf
       ? { ...config.translation, ...patch.translation }
       : config.translation,
     mouse: patch.mouse ? { ...config.mouse, ...patch.mouse } : config.mouse,
+    picker: patch.picker
+      ? normalizePickerConfig({ ...config.picker, ...patch.picker })
+      : config.picker,
   }
 }
 
@@ -339,6 +352,7 @@ export default function SettingsPage() {
     },
     translation: defaultTranslationConfig,
     mouse: { middleClickPtt: false },
+    picker: normalizePickerConfig(),
   })
 
   const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null)
@@ -664,6 +678,7 @@ export default function SettingsPage() {
       currentOriginalConfig.translation,
     )
     const mouseDirty = isMouseConfigDirty(currentConfig.mouse, currentOriginalConfig.mouse)
+    const pickerDirty = isPickerConfigDirty(currentConfig.picker, currentOriginalConfig.picker)
     const refineError = refineDirty ? getRefineErrorMessage(normalizedRefineConfig) : null
     const hotkeyError = hotkeyDirty ? getHotkeyErrorMessage(currentConfig.hotkey) : null
 
@@ -696,6 +711,10 @@ export default function SettingsPage() {
 
     if (mouseDirty) {
       patch.mouse = { middleClickPtt: currentConfig.mouse?.middleClickPtt ?? false }
+    }
+
+    if (pickerDirty) {
+      patch.picker = normalizePickerConfig(currentConfig.picker)
     }
 
     const invalidMessage = hotkeyError ?? refineError
@@ -1035,6 +1054,64 @@ export default function SettingsPage() {
         userGlossary: normalizeUserGlossary(raw.split('\n')),
       }),
     }))
+  }
+
+  // ---- 快速插入面板（鼠标侧键）-------------------------------------------
+  const [userSnippetsDraft, setUserSnippetsDraft] = useState('')
+  const [snippetCandidates, setSnippetCandidates] = useState<string[]>([])
+  const [clearingClipboard, setClearingClipboard] = useState(false)
+
+  useEffect(() => {
+    if (isConfigLoading) return
+    setUserSnippetsDraft((config.picker?.userSnippets ?? []).join('\n'))
+    // 只在配置加载完成后同步一次草稿，避免打字被归一化回写打断。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConfigLoading])
+
+  // 「从历史学到的候选」：设置页打开时拉一次（learnSnippets 开着才有内容）。
+  useEffect(() => {
+    if (isConfigLoading || window.electronAPI.platform !== 'win32') return
+    void window.electronAPI
+      .getSnippetCandidates()
+      .then(setSnippetCandidates)
+      .catch(() => setSnippetCandidates([]))
+  }, [isConfigLoading])
+
+  const handlePickerChange = (patch: Partial<PickerConfig>) => {
+    setConfig((prev) => ({
+      ...prev,
+      picker: normalizePickerConfig({ ...prev.picker, ...patch }),
+    }))
+  }
+
+  const handleUserSnippetsChange = (raw: string) => {
+    setUserSnippetsDraft(raw)
+    handlePickerChange({ userSnippets: normalizeUserGlossary(raw.split('\n')) })
+  }
+
+  const handleConfirmCandidate = (candidate: string) => {
+    void window.electronAPI
+      .confirmSnippetCandidate(candidate)
+      .then((updated) => {
+        setSnippetCandidates((prev) => prev.filter((item) => item !== candidate))
+        setUserSnippetsDraft(updated.join('\n'))
+        setConfig((prev) => ({
+          ...prev,
+          picker: normalizePickerConfig({ ...prev.picker, userSnippets: updated }),
+        }))
+      })
+      .catch((error) => {
+        toast.error(typeof error === 'string' ? error : t('settings.picker.candidateAddFailed'))
+      })
+  }
+
+  const handleClearClipboard = () => {
+    setClearingClipboard(true)
+    void window.electronAPI
+      .clearClipboardHistory()
+      .then(() => toast.success(t('settings.picker.clipboardCleared')))
+      .catch(() => toast.error(t('settings.picker.clipboardClearFailed')))
+      .finally(() => setClearingClipboard(false))
   }
 
   const handleMicrophoneChange = (value: string) => {
@@ -2320,24 +2397,173 @@ export default function SettingsPage() {
 
           {/* 鼠标触发（仅 Windows：中键 PTT 依赖 WH_MOUSE_LL 钩子） */}
           {window.electronAPI.platform === 'win32' && (
-            <SectionCard
-              icon={<MousePointer className="h-[18px] w-[18px]" />}
-              title={t('settings.mouse.title')}
-              desc={t('settings.mouse.description')}
-            >
-              <ToggleRow
-                title={t('settings.mouse.middleClickPtt')}
-                desc={t('settings.mouse.middleClickPttHelp')}
-                checked={config.mouse?.middleClickPtt ?? false}
-                disabled={isConfigLoading}
-                onChange={(checked) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    mouse: { ...prev.mouse, middleClickPtt: checked },
-                  }))
-                }
-              />
-            </SectionCard>
+            <>
+              <SectionCard
+                icon={<MousePointer className="h-[18px] w-[18px]" />}
+                title={t('settings.mouse.title')}
+                desc={t('settings.mouse.description')}
+              >
+                <ToggleRow
+                  title={t('settings.mouse.middleClickPtt')}
+                  desc={t('settings.mouse.middleClickPttHelp')}
+                  checked={config.mouse?.middleClickPtt ?? false}
+                  disabled={isConfigLoading}
+                  onChange={(checked) =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      mouse: { ...prev.mouse, middleClickPtt: checked },
+                    }))
+                  }
+                />
+              </SectionCard>
+
+              {/* 快速插入面板（仅 Windows：侧键 X1/X2 依赖同一个 WH_MOUSE_LL 钩子） */}
+              <SectionCard
+                icon={<MousePointer className="h-[18px] w-[18px]" />}
+                title={t('settings.picker.title')}
+                desc={t('settings.picker.description')}
+              >
+                <div className="space-y-4">
+                  <ToggleRow
+                    title={t('settings.picker.enabled')}
+                    desc={t('settings.picker.enabledHelp')}
+                    checked={config.picker?.enabled ?? true}
+                    disabled={isConfigLoading}
+                    onChange={(checked) => handlePickerChange({ enabled: checked })}
+                  />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="pickerX1">{t('settings.picker.x1Action')}</Label>
+                      <Select
+                        value={config.picker?.x1Action ?? 'snippets'}
+                        onValueChange={(value) =>
+                          handlePickerChange({ x1Action: value as PickerFocusAction })
+                        }
+                      >
+                        <SelectTrigger id="pickerX1" className="no-drag w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="snippets">
+                            {t('settings.picker.actionSnippets')}
+                          </SelectItem>
+                          <SelectItem value="clipboard">
+                            {t('settings.picker.actionClipboard')}
+                          </SelectItem>
+                          <SelectItem value="both">{t('settings.picker.actionBoth')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="pickerX2">{t('settings.picker.x2Action')}</Label>
+                      <Select
+                        value={config.picker?.x2Action ?? 'clipboard'}
+                        onValueChange={(value) =>
+                          handlePickerChange({ x2Action: value as PickerFocusAction })
+                        }
+                      >
+                        <SelectTrigger id="pickerX2" className="no-drag w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="snippets">
+                            {t('settings.picker.actionSnippets')}
+                          </SelectItem>
+                          <SelectItem value="clipboard">
+                            {t('settings.picker.actionClipboard')}
+                          </SelectItem>
+                          <SelectItem value="both">{t('settings.picker.actionBoth')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <ToggleRow
+                    title={t('settings.picker.clipboardEnabled')}
+                    desc={t('settings.picker.clipboardEnabledHelp')}
+                    checked={config.picker?.clipboardEnabled ?? true}
+                    disabled={isConfigLoading}
+                    onChange={(checked) => handlePickerChange({ clipboardEnabled: checked })}
+                  />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="pickerClipboardLimit">
+                        {t('settings.picker.clipboardLimit')}
+                      </Label>
+                      <Select
+                        value={String(config.picker?.clipboardLimit ?? 30)}
+                        onValueChange={(value) =>
+                          handlePickerChange({ clipboardLimit: Number(value) })
+                        }
+                      >
+                        <SelectTrigger id="pickerClipboardLimit" className="no-drag w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {['10', '20', '30', '50', '100'].map((limit) => (
+                            <SelectItem key={limit} value={limit}>
+                              {limit}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="no-drag"
+                        disabled={isConfigLoading || clearingClipboard}
+                        onClick={handleClearClipboard}
+                      >
+                        {t('settings.picker.clearClipboard')}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <ToggleRow
+                    title={t('settings.picker.learnSnippets')}
+                    desc={t('settings.picker.learnSnippetsHelp')}
+                    checked={config.picker?.learnSnippets ?? true}
+                    disabled={isConfigLoading}
+                    onChange={(checked) => handlePickerChange({ learnSnippets: checked })}
+                  />
+                  <div className="space-y-1.5">
+                    <Label htmlFor="userSnippets">{t('settings.picker.userSnippets')}</Label>
+                    <Textarea
+                      id="userSnippets"
+                      className="no-drag min-h-[96px]"
+                      placeholder={t('settings.picker.userSnippetsPlaceholder')}
+                      value={userSnippetsDraft}
+                      onChange={(event) => handleUserSnippetsChange(event.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t('settings.picker.userSnippetsHelp')}
+                    </p>
+                  </div>
+                  {snippetCandidates.length > 0 && (
+                    <div className="space-y-1.5">
+                      <Label>{t('settings.picker.candidates')}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {t('settings.picker.candidatesHelp')}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {snippetCandidates.map((candidate) => (
+                          <button
+                            key={candidate}
+                            type="button"
+                            className="no-drag rounded-full bg-primary/10 px-2.5 py-1 text-xs text-foreground ring-1 ring-primary/25 transition-colors hover:bg-primary/20"
+                            onClick={() => handleConfirmCandidate(candidate)}
+                          >
+                            + {candidate}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </SectionCard>
+            </>
           )}
 
           {window.electronAPI.platform === 'linux' && (

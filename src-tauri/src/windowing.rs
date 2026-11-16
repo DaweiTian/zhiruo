@@ -82,6 +82,11 @@ pub const SESSION_WINDOW_LABEL: &str = "session";
 /// (`App.tsx` routes it to the hub panel) rely on this exact string.
 pub const HUB_WINDOW_LABEL: &str = "hub";
 
+/// Label of the quick-insert picker window (mouse side-button panel). Same
+/// rationale as [`OVERLAY_WINDOW_LABEL`]: `tauri.conf.json` and the renderer
+/// (`App.tsx` routes it to the picker panel) rely on this exact string.
+pub const PICKER_WINDOW_LABEL: &str = "picker";
+
 /// How long a hidden main window survives before its WebView process is
 /// destroyed to reclaim memory (the window itself already hid to the tray).
 ///
@@ -131,6 +136,12 @@ static SESSION_CREATION_LOCK: Mutex<()> = Mutex::new(());
 /// [`OVERLAY_CREATION_LOCK`]: [`ensure_hub_window`] is only ever called from
 /// async/worker contexts (`hub::open_hub`), never from the main thread.
 static HUB_CREATION_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serializes picker-window (re)creation, same invariant as
+/// [`OVERLAY_CREATION_LOCK`]: [`ensure_picker_window`] is only ever called
+/// from async/worker contexts (`picker::open_picker` via the mouse hook's
+/// serial worker), never from the main thread.
+static PICKER_CREATION_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // Window-operation tracing
@@ -593,8 +604,9 @@ pub fn harden_app_windows<R: tauri::Runtime>(app: &AppHandle<R>) {
             MAIN_WINDOW_LABEL => harden_main_window(&window),
             // The session capsule is the overlay's twin (same shape, same
             // no-activate / no-frame requirements), so it gets the same
-            // hardening pass.
-            OVERLAY_WINDOW_LABEL | SESSION_WINDOW_LABEL | HUB_WINDOW_LABEL => {
+            // hardening pass. The picker is focusable (keyboard nav) but
+            // shares the frame-suppression / backdrop work.
+            OVERLAY_WINDOW_LABEL | SESSION_WINDOW_LABEL | HUB_WINDOW_LABEL | PICKER_WINDOW_LABEL => {
                 harden_overlay_window(&window)
             }
             _ => {}
@@ -1061,6 +1073,76 @@ fn build_hub_window<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Webv
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             crate::hub::close_hub(&handle);
+        }
+    });
+
+    harden_overlay_window(&window);
+    Ok(window)
+}
+
+// ---------------------------------------------------------------------------
+// Quick-insert picker window rebuild lifecycle
+// ---------------------------------------------------------------------------
+
+/// Get the quick-insert picker window, rebuilding it on demand if a close
+/// path destroyed it. Mirrors [`ensure_hub_window`]: the picker is normally
+/// only hidden (`picker::close_picker`), and a `CloseRequested` converts into
+/// a hide — rebuilding here keeps "the side button can always open the panel".
+///
+/// Threading: only call from worker / async threads — see [`PICKER_CREATION_LOCK`].
+pub fn ensure_picker_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
+    let _guard = PICKER_CREATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(window) = app.get_webview_window(PICKER_WINDOW_LABEL) {
+        harden_overlay_window(&window);
+        return Some(window);
+    }
+    match build_picker_window(app) {
+        Ok(window) => Some(window),
+        Err(e) => {
+            log::warn!("picker window build failed ({e}); falling back to the existing window");
+            let window = app.get_webview_window(PICKER_WINDOW_LABEL)?;
+            harden_overlay_window(&window);
+            Some(window)
+        }
+    }
+}
+
+/// Rebuild the picker with the same shape as the `picker` entry in
+/// `tauri.conf.json` (320×380, decorations off, shadow off, transparent,
+/// always-on-top, skip-taskbar, hidden until shown).
+///
+/// 与 hub 的关键差异：**可聚焦**（`focusable(true)`）——面板要方向键 +
+/// Enter 键盘速选，必须收键盘输入（hub 是纯点击面板所以 non-focusable）。
+/// 聚焦带来的 WebView2 ghost titlebar 由 `harden_overlay_window` 的
+/// `suppress_focus_frame` / `clear_webview_ghost_titlebar` 兜住。
+fn build_picker_window<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        PICKER_WINDOW_LABEL,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("芷若")
+    .inner_size(crate::picker::PICKER_WINDOW_W, crate::picker::PICKER_WINDOW_H)
+    .resizable(false)
+    .decorations(false)
+    .shadow(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(false)
+    .focusable(true)
+    .visible(false)
+    .build()?;
+
+    // CloseRequested -> hide (never destroy), same belt-and-braces as the
+    // other capsule windows.
+    let handle = window.app_handle().clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            crate::picker::close_picker(&handle);
         }
     });
 

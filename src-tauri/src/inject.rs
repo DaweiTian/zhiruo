@@ -25,6 +25,8 @@ fn paste_via_clipboard(text: &str) -> Result<(), String> {
     clipboard
         .set_text(text.to_string())
         .map_err(|e| format!("clipboard write failed: {e}"))?;
+    // 自写抑制：注入用的写剪贴板不进最近剪贴板历史（自产自销）。
+    crate::clipboard::mark_self_write(text);
 
     thread::sleep(Duration::from_millis(40));
 
@@ -71,6 +73,8 @@ pub fn hyprland_set_clipboard(text: &str) -> Result<(), String> {
     if !status.success() {
         return Err("wl-copy failed".into());
     }
+    // 自写抑制（同 paste_via_clipboard）。
+    crate::clipboard::mark_self_write(text);
     Ok(())
 }
 

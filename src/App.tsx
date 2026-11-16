@@ -8,6 +8,7 @@ import { AudioRecorder } from './components/AudioRecorder'
 import { HUD } from './components/HUD'
 import { SessionHUD } from './components/SessionHUD'
 import { Hub } from './components/Hub'
+import { Picker } from './components/Picker'
 import { resolveWindowKind, type WindowKind } from './shared/window-kind'
 
 function readWindowKind(): WindowKind {
@@ -55,6 +56,12 @@ function App() {
   // (hub window, shown & positioned by Rust on capsule right-click).
   if (windowKind === 'hub') {
     return <Hub />
+  }
+
+  // Quick-insert picker: snippets / recent-clipboard panel (picker window,
+  // toggled by the mouse side buttons and positioned next to the pointer).
+  if (windowKind === 'picker') {
+    return <Picker />
   }
 
   const getPage = () => {

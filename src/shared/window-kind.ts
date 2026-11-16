@@ -4,22 +4,30 @@
  * Tauri creates every window from `src-tauri/tauri.conf.json` and the label
  * decides the surface: `main` (settings shell), `overlay` (draggable standby
  * capsule), `session` (fixed bottom-center session capsule), `hub` (selection
- * quick-action radial menu), `background` (headless recorder). In a browser
- * preview (no Tauri) the location hash stands in for the label.
+ * quick-action radial menu), `picker` (quick-insert panel on mouse side
+ * buttons), `background` (headless recorder). In a browser preview (no Tauri)
+ * the location hash stands in for the label.
  *
  * Kept as a pure function so the label / hash routing is unit-testable
  * (`window-kind.test.ts`); `App.tsx` owns the Tauri / DOM reads.
  */
-export type WindowKind = 'main' | 'overlay' | 'session' | 'hub' | 'background' | 'unknown'
+export type WindowKind =
+  | 'main'
+  | 'overlay'
+  | 'session'
+  | 'hub'
+  | 'picker'
+  | 'background'
+  | 'unknown'
 
 /**
  * Resolve the window kind from the Tauri window label (or `null` when not
  * running inside Tauri) plus the location hash (without the leading `#`).
  *
  * A recognized label always wins; otherwise the hash routes
- * `/overlay` → overlay, `/session` → session, `/hub` → hub, empty or `/` →
- * background (the headless recorder is the browser-preview default),
- * anything else → main.
+ * `/overlay` → overlay, `/session` → session, `/hub` → hub, `/picker` →
+ * picker, empty or `/` → background (the headless recorder is the
+ * browser-preview default), anything else → main.
  */
 export function resolveWindowKind(label: string | null, hash: string): WindowKind {
   if (
@@ -27,6 +35,7 @@ export function resolveWindowKind(label: string | null, hash: string): WindowKin
     label === 'overlay' ||
     label === 'session' ||
     label === 'hub' ||
+    label === 'picker' ||
     label === 'background'
   ) {
     return label
@@ -34,6 +43,7 @@ export function resolveWindowKind(label: string | null, hash: string): WindowKin
   if (hash === '/overlay') return 'overlay'
   if (hash === '/session') return 'session'
   if (hash === '/hub') return 'hub'
+  if (hash === '/picker') return 'picker'
   if (!hash || hash === '/') return 'background'
   return 'main'
 }

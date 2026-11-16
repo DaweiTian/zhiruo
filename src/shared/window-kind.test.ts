@@ -9,6 +9,8 @@ describe('resolveWindowKind', () => {
     expect(resolveWindowKind('session', '')).toBe('session')
     // Selection quick-action hub (right-click on the resident capsule).
     expect(resolveWindowKind('hub', '')).toBe('hub')
+    // Quick-insert picker (mouse side buttons X1/X2).
+    expect(resolveWindowKind('picker', '')).toBe('picker')
     expect(resolveWindowKind('background', '')).toBe('background')
   })
 
@@ -16,6 +18,7 @@ describe('resolveWindowKind', () => {
     expect(resolveWindowKind('session', '/overlay')).toBe('session')
     expect(resolveWindowKind('overlay', '/session')).toBe('overlay')
     expect(resolveWindowKind('hub', '/overlay')).toBe('hub')
+    expect(resolveWindowKind('picker', '/hub')).toBe('picker')
     expect(resolveWindowKind('main', '/history')).toBe('main')
   })
 
@@ -23,6 +26,7 @@ describe('resolveWindowKind', () => {
     expect(resolveWindowKind(null, '/overlay')).toBe('overlay')
     expect(resolveWindowKind(null, '/session')).toBe('session')
     expect(resolveWindowKind(null, '/hub')).toBe('hub')
+    expect(resolveWindowKind(null, '/picker')).toBe('picker')
     expect(resolveWindowKind(null, '/')).toBe('background')
     expect(resolveWindowKind(null, '')).toBe('background')
     expect(resolveWindowKind(null, '/history')).toBe('main')

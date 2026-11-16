@@ -344,8 +344,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   录制态双守卫，触发时 spawn `translate::translate_selection`（不再向渲染层
   emit 无任何监听者的 `translate` 事件）。
   `main_window_focused` 为 `pub`，供 `mouse.rs` 中键守卫只读复用（逻辑不变）。
-- `src/mouse.rs` - Windows 鼠标钩子（仅 Windows）：中键 PTT、胶囊 hover 穿透**与**
-  选区 hub 点外收起共用一个
+- `src/mouse.rs` - Windows 鼠标钩子（仅 Windows）：中键 PTT、胶囊 hover 穿透、
+  选区 hub / 快速插入面板点外收起**与侧键 X1/X2 面板开关**共用一个
   常驻 `SetWindowsHookExW(WH_MOUSE_LL)` 钩子（独立后台线程跑消息循环）。
   **hover 穿透（0.5.15）**：HUD / session 窗是 280×64 透明窗、可见胶囊只占一部分，
   其余必须让点击 / 滚轮穿透到下层应用（缺陷：贴边后屏内 ~3cm 透明条带吞滚动条、
@@ -362,7 +362,10 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   **渲染层首个矩形推送之前（`CAPSULE_RECEIVED=false`）绝不碰 ignore 标志**（安全
   默认可交互，渲染层挂了也不会留下点不到的死胶囊）；推送 `null`（胶囊消失）= 恒
   穿透。窗口移动（拖拽 / 吸附 / 复位）经 `commands::OverlayFrame::apply` 统一触发
-  `refresh_capsule_hover`（光标静止 + 胶囊移位的悬停重算）。非 Windows 为 no-op stub
+  `refresh_capsule_hover`（光标静止 + 胶囊移位的悬停重算）。**侧键 X1/X2（批次一）**：
+  `picker.enabled` 开启时 `WM_XBUTTONDOWN/UP` 被**吞掉**（钩子返回 1，唯一例外于
+  "观察不拦截"——浏览器前进/后退随之失效，产品确认接受），down 走 enqueue 唤出 /
+  收起快速插入面板（开关语义，toggle）；关闭即完全放行。非 Windows 为 no-op stub
   （无钩子即保持旧行为、不回归）。
   **中键 PTT**：`WM_MBUTTONDOWN` 启动会话、
   `WM_MBUTTONUP` 停止，观察不吞键（始终 `CallNextHookEx`），由 `mouse.middleClickPtt`
@@ -431,8 +434,27 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   展开；窗口生命周期归 `windowing::ensure_hub_window`（隐藏 / 重建，绝不销毁）。
   收起 = 渲染层背景点击 / 右键、结果卡片关闭按钮、替换成功延时收起、Windows
   `mouse.rs` 点外收起（`is_open` 供其门禁）。
+- `src/clipboard.rs` - 最近剪贴板环形缓冲（快速插入面板的自建剪贴板历史，
+  `voice-key-clipboard.json`）：只存文本、单条 10 KB 上限、重复内容去重置顶、
+  上限默认 30 条（`picker.clipboardLimit` 可配 5–100）。采集 Windows 走
+  `AddClipboardFormatListener`（`WM_CLIPBOARDUPDATE`，专用线程 + message-only
+  窗口）、非 Windows 降级轮询 + 内容比对；**自写抑制**（`mark_self_write`，内容
+  哈希基线）让 `translate.rs` / `inject.rs` 的写剪贴板不进历史（自产自销）。隐私：
+  「启用剪贴板采集」总开关 + 设置页一键清空；不进日志、不上传。
+- `src/picker.rs` - 快速插入面板编排（鼠标侧键 X1/X2 唤出，label `picker`）：
+  开关语义 toggle、贴指针弹出（`OverlayFrame` 工作区夹取，约 320×380）、`picker-update`
+  事件下发常用词 + 最近剪贴板（挂载拉 `get_picker_data` 兜底首开竞态）；落点
+  `snippets | clipboard | both`（X1/X2 各自配置）。**键盘导航需要输入焦点**
+  （与 hub 的 non-focusable 相反）——插入前 `restore_foreground` 把焦点还给先前
+  应用（Alt 敲击解锁 + `SetForegroundWindow`），否则 Ctrl/V 会打进面板自己。
+  常用词双来源：`picker.userSnippets`（手动，100 条 × 64 字符）+ 历史 n-gram 候选
+  （`ngram_candidates` 纯函数：2–6 字片段出现 ≥3 次、极大片段、含 CJK，
+  人工确认才入库）。窗口生命周期归 `windowing::ensure_picker_window`（隐藏 / 重建，
+  绝不销毁）。
 - `src/config.rs` - 配置存储（`voice-key-config.json`）。ASR 段含
-  `micKeepAlive`（麦克风保温，默认开）等录音行为开关。**配置写入线程安全**：
+  `micKeepAlive`（麦克风保温，默认开）等录音行为开关；`picker` 段含快速插入面板
+  （侧键 X1/X2、剪贴板采集、常用词 `userSnippets`，normalizer 与 userGlossary
+  同一纪律）。**配置写入线程安全**：
   所有写入口（`merge`：`set_config` 及其快捷键回滚、`test_refine_connection`、
   `set_app_language`、overlay 显隐 flag / 拖拽位置持久化）的
   load → mutate → save 全程持进程级 `CONFIG_LOCK`（与 `stats.rs` 的 `STATS_LOCK`
@@ -440,7 +462,7 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   写不丢更新。锁内只做文件 I/O 与纯 JSON 合并、不嵌套其他锁（无锁序死锁风险）。
   **存储根（0.5.14）**：`config_dir()` 一处收口——`<exe_dir>\data\` 下存在
   `.portable` 标记文件时数据根 = 安装目录（便携模式），否则 = `%APPDATA%\voice-key`；
-  config / history / stats / logs 全派生自它。根**一次进程内解析固定**
+  config / history / stats / clipboard / logs 全派生自它。根**一次进程内解析固定**
   （`OnceLock` / `resolved_root`），切换只在下次启动生效（否则 `ConfigStore` 启动时
   缓存的路径会与 `history_file()` / `log_dir()` 失同步）。`switch_storage_root` 是
   写探测 → 复制 → 校验 → 标记门 → 失败回滚的完整迁移；`.portable` 是模式切换的

@@ -1433,6 +1433,10 @@ pub fn set_config(
     // installed / removed on its own thread (mouse.rs), so this is a cheap,
     // thread-safe toggle rather than a rebind with rollback semantics.
     crate::mouse::set_middle_click_ptt(merged.mouse.middle_click_ptt);
+    // 快速插入面板同理：侧键接管与剪贴板采集都是线程安全开关。
+    crate::mouse::set_picker_side_buttons(merged.picker.enabled);
+    crate::clipboard::set_enabled(merged.picker.clipboard_enabled);
+    crate::clipboard::set_limit(merged.picker.clipboard_limit);
     let mut hotkey_rolled_back = false;
     if let Err(err) = hotkey::rebind(&app, &merged.hotkey) {
         // Re-bind the previous accelerators so PTT keeps working, and restore
@@ -2157,6 +2161,84 @@ pub async fn run_selection_hub_action(app: AppHandle, action: String) -> Result<
 #[tauri::command]
 pub fn copy_text(text: String) -> Result<(), String> {
     crate::translate::write_clipboard_text(&text)
+}
+
+// ---------------------------------------------------------------------------
+// 快速插入面板（鼠标侧键 X1/X2）
+// ---------------------------------------------------------------------------
+
+/// 面板数据：落点 + 常用词 + 最近剪贴板。面板首开有「事件先于监听器」的
+/// 竞态（`picker-update` 可能在 React 挂载前发出），渲染层挂载时拉一份兜底。
+#[tauri::command]
+pub fn get_picker_data() -> Value {
+    crate::picker::current_payload(None)
+}
+
+/// 收起面板（Esc / 点选后由渲染层调用；点外收起走 `mouse.rs` 钩子）。
+#[tauri::command]
+pub fn close_picker_panel(app: AppHandle) -> Result<(), String> {
+    crate::picker::close_picker(&app);
+    Ok(())
+}
+
+/// 点选条目注入到当前光标（现有 `inject_text` 通道；批次二加 `injectMode`
+/// 后自动受益）。注入前把焦点还给先前应用——面板是可聚焦窗口，不还焦点的
+/// 话 Ctrl/V 会打进面板自己。成功才收起面板；失败保持打开可重试（文本已留
+/// 在剪贴板，`inject_text` 的粘贴路径写入后才发按键）。
+#[tauri::command]
+pub async fn picker_insert(app: AppHandle, text: String) -> Result<(), String> {
+    // 命令边界不可信：形状校验 + 尺寸上限（剪贴板条目上限同一口径）。
+    if text.trim().is_empty() {
+        return Err("插入内容为空。".to_string());
+    }
+    if text.len() > 10 * 1024 {
+        return Err("插入内容过长。".to_string());
+    }
+    crate::picker::restore_foreground();
+    // 等焦点稳定（还焦点是异步生效），与 translate 流水线的写后延迟同理。
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    inject::inject_text(&text)?;
+    crate::picker::close_picker(&app);
+    Ok(())
+}
+
+/// 设置页拉取「从历史学到的常用词候选」（`picker.learnSnippets` 关着则空）。
+#[tauri::command]
+pub fn get_snippet_candidates(state: State<AppState>) -> Vec<String> {
+    let existing = state.config.load().picker.user_snippets;
+    crate::picker::learned_candidates(&existing)
+}
+
+/// 人工确认一条候选 → 进 `picker.userSnippets`，返回更新后的常用词列表。
+#[tauri::command]
+pub fn confirm_snippet_candidate(
+    state: State<AppState>,
+    text: String,
+) -> Result<Vec<String>, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("常用词不能为空。".to_string());
+    }
+    if trimmed.chars().count() > 64 {
+        return Err("常用词最多 64 个字符。".to_string());
+    }
+    let mut list = state.config.load().picker.user_snippets;
+    if !list.iter().any(|t| t == trimmed) {
+        list.push(trimmed.to_string());
+    }
+    if list.len() > 100 {
+        return Err("常用词最多 100 条。".to_string());
+    }
+    let merged = state
+        .config
+        .merge(&serde_json::json!({ "picker": { "userSnippets": list } }))?;
+    Ok(merged.picker.user_snippets)
+}
+
+/// 一键清空最近剪贴板（隐私开关的一半）。
+#[tauri::command]
+pub fn clear_clipboard_history() -> Result<(), String> {
+    crate::clipboard::clear()
 }
 
 #[cfg(test)]

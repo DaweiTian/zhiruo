@@ -41,17 +41,29 @@ voicekey/
                       tray with delayed main WebView destroy/rebuild.
       hotkey.rs       Global hotkey parsing/binding, left/right modifier tokens,
                       in-app and capture-active guards.
-      mouse.rs        Windows-only mouse middle-button PTT (low-level hook on a
-                      background message loop; no-op stub elsewhere).
+      mouse.rs        Windows-only mouse hook (low-level hook on a background
+                      message loop; no-op stub elsewhere): middle-button PTT,
+                      capsule hover passthrough, outside-press dismiss, and
+                      side-button X1/X2 quick-picker toggle (the one branch
+                      that swallows input).
       translate.rs    Selection-action orchestration (clipboard snapshot,
                       sentinel-based selection capture, LLM translate/polish/
                       explain, paste-back with selection re-verify, restore).
       hub.rs          Selection quick-action hub orchestration (right-click on
                       the resident capsule: capture selection, hub-update event
                       flow, radial-panel actions around the capsule).
-      asr.rs          Local transcription (SenseVoice classic + X-ASR streaming).
+      clipboard.rs    Recent-clipboard ring buffer (voice-key-clipboard.json,
+                      text-only, self-write suppression; Windows event-driven
+                      listener, polling fallback elsewhere).
+      picker.rs       Quick-insert panel orchestration (mouse side buttons X1/
+                      X2: toggle, place at pointer, snippets + recent
+                      clipboard, n-gram snippet candidates, focus restore
+                      before inject).
+      asr.rs          Cloud transcription (MiMo / Qwen / Doubao Ark / OpenAI
+                      dialects; local SenseVoice / X-ASR were removed in 0.5.11).
       llm.rs          OpenAI-compatible refinement and translation calls.
-      inject.rs       Text injection (enigo on Win/mac, wl-copy/wtype on Hyprland).
+      inject.rs       Text injection (enigo on Win/mac: clipboard + Ctrl/V;
+                      Hyprland: wl-copy + Shift+Insert).
       audio.rs        Audio chunk handling and session audio plumbing.
       state.rs        Shared app state (config, session, guards).
       tray.rs         Single tray source: menu, launch-at-login, capsule toggle.

@@ -95,6 +95,44 @@ pub struct MouseConfig {
     pub middle_click_ptt: bool,
 }
 
+/// 快速插入面板（鼠标侧键 X1/X2 唤出）的持久化配置。
+///
+/// 侧键接管是 Windows-only（`mouse.rs` 的 `WH_MOUSE_LL` 钩子），配置存全
+/// 平台以免换机丢偏好。动作字面量见 [`normalize_snippet_action`]；
+/// `user_snippets` 是手动管理的常用词（上限 100 条 × 64 字符）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PickerConfig {
+    /// 启用侧键快速插入（关掉即完全放行 X1/X2，前进/后退恢复）。
+    pub enabled: bool,
+    /// X1 单击落点：`snippets` | `clipboard` | `both`。
+    pub x1_action: String,
+    /// X2 单击落点：`snippets` | `clipboard` | `both`。
+    pub x2_action: String,
+    /// 启用剪贴板采集（本地环形缓冲，只存文本；隐私总开关）。
+    pub clipboard_enabled: bool,
+    /// 剪贴板条数上限（5–100，非法值由 [`normalize_clipboard_limit`] 夹取）。
+    pub clipboard_limit: u32,
+    /// 从历史转写中学习常用词候选（只进候选列表，人工确认才入库）。
+    pub learn_snippets: bool,
+    /// 手动管理的常用词（`userSnippets`）。
+    pub user_snippets: Vec<String>,
+}
+
+impl Default for PickerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            x1_action: "snippets".into(),
+            x2_action: "clipboard".into(),
+            clipboard_enabled: true,
+            clipboard_limit: 30,
+            learn_snippets: true,
+            user_snippets: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ASRConfig {
@@ -284,6 +322,8 @@ pub struct AppConfig {
     pub translation: TranslationConfig,
     #[serde(default)]
     pub mouse: MouseConfig,
+    #[serde(default)]
+    pub picker: PickerConfig,
 }
 
 impl Default for AppConfig {
@@ -295,6 +335,7 @@ impl Default for AppConfig {
             hotkey: HotkeyConfig::default(),
             translation: TranslationConfig::default(),
             mouse: MouseConfig::default(),
+            picker: PickerConfig::default(),
         }
     }
 }
@@ -399,6 +440,11 @@ pub fn history_file() -> PathBuf {
     config_dir().join("voice-key-history.json")
 }
 
+/// 最近剪贴板环形缓冲（快速插入面板的自建剪贴板历史）。
+pub fn clipboard_file() -> PathBuf {
+    config_dir().join("voice-key-clipboard.json")
+}
+
 /// Lifetime stats store, independent from history so history deletion or the
 /// 90-day retention prune never resets cumulative figures.
 pub fn stats_file() -> PathBuf {
@@ -416,10 +462,12 @@ pub fn log_dir() -> PathBuf {
 // ---------------------------------------------------------------------------
 
 /// Data files that must copy byte-for-byte (strict size check after copy).
-const STRICT_DATA_FILES: [&str; 3] = [
+/// Missing files are skipped (a fresh install may not have created them yet).
+const STRICT_DATA_FILES: [&str; 4] = [
     "voice-key-config.json",
     "voice-key-history.json",
     "voice-key-stats.json",
+    "voice-key-clipboard.json",
 ];
 
 /// Live log directory, copied with grow-tolerance (the running app may append
@@ -620,6 +668,52 @@ pub fn normalize_filler_cleanup(raw: &str) -> Option<String> {
         "off" | "rules" | "llm" => Some(raw.to_string()),
         _ => None,
     }
+}
+
+/// 侧键落点动作：仅接受 `snippets` / `clipboard` / `both`；其余返回 `None`
+/// （调用方保留旧值，与 [`normalize_filler_cleanup`] 同一策略）。
+pub fn normalize_snippet_action(raw: &str) -> Option<String> {
+    match raw {
+        "snippets" | "clipboard" | "both" => Some(raw.to_string()),
+        _ => None,
+    }
+}
+
+/// 剪贴板条数上限：夹取到 5–100（默认 30）。非法类型返回 `None`。
+pub fn normalize_clipboard_limit(raw: &serde_json::Value) -> Option<u32> {
+    raw.as_u64().map(|n| n.clamp(5, 100) as u32)
+}
+
+/// invoke 边界校验常用词（`picker.userSnippets`）：形状非法/超限报错，
+/// 空串与重复静默清洗。上限 100 条 × 64 字符（与
+/// [`normalize_user_glossary`] 同一纪律）。
+pub fn normalize_user_snippets(raw: Option<&serde_json::Value>) -> Result<Vec<String>, String> {
+    let Some(value) = raw else {
+        return Ok(Vec::new());
+    };
+    let items = value
+        .as_array()
+        .ok_or_else(|| "picker.userSnippets must be an array of strings".to_string())?;
+    let mut terms: Vec<String> = Vec::new();
+    for item in items {
+        let s = item
+            .as_str()
+            .ok_or_else(|| "picker.userSnippets must contain only strings".to_string())?;
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.chars().count() > 64 {
+            return Err("picker.userSnippets entries must be at most 64 characters".into());
+        }
+        if !terms.iter().any(|t| t == trimmed) {
+            terms.push(trimmed.to_string());
+        }
+    }
+    if terms.len() > 100 {
+        return Err("picker.userSnippets supports at most 100 entries".into());
+    }
+    Ok(terms)
 }
 
 pub struct ConfigStore {
@@ -914,6 +1008,42 @@ impl ConfigStore {
             }
         }
 
+        if let Some(picker) = partial.get("picker") {
+            // Field-by-field merge (same rationale as `asr`): absent keys keep
+            // their stored value so a partial patch never resets the panel.
+            if let Some(obj) = picker.as_object() {
+                if let Some(v) = obj.get("enabled").and_then(|v| v.as_bool()) {
+                    merged.picker.enabled = v;
+                }
+                if let Some(v) = obj.get("x1Action").and_then(|v| v.as_str()) {
+                    if let Some(valid) = normalize_snippet_action(v) {
+                        merged.picker.x1_action = valid;
+                    }
+                }
+                if let Some(v) = obj.get("x2Action").and_then(|v| v.as_str()) {
+                    if let Some(valid) = normalize_snippet_action(v) {
+                        merged.picker.x2_action = valid;
+                    }
+                }
+                if let Some(v) = obj.get("clipboardEnabled").and_then(|v| v.as_bool()) {
+                    merged.picker.clipboard_enabled = v;
+                }
+                if let Some(v) = obj.get("clipboardLimit") {
+                    if let Some(limit) = normalize_clipboard_limit(v) {
+                        merged.picker.clipboard_limit = limit;
+                    }
+                }
+                if let Some(v) = obj.get("learnSnippets").and_then(|v| v.as_bool()) {
+                    merged.picker.learn_snippets = v;
+                }
+                if let Some(v) = obj.get("userSnippets") {
+                    if !v.is_null() {
+                        merged.picker.user_snippets = normalize_user_snippets(Some(v))?;
+                    }
+                }
+            }
+        }
+
         self.save_unlocked(&merged)?;
         Ok(merged)
     }
@@ -949,6 +1079,81 @@ mod tests {
         assert_eq!(normalize_filler_cleanup("rules").as_deref(), Some("rules"));
         assert_eq!(normalize_filler_cleanup("llm").as_deref(), Some("llm"));
         assert_eq!(normalize_filler_cleanup("drop-everything"), None);
+    }
+
+    #[test]
+    fn normalize_snippet_action_accepts_only_known_foci() {
+        assert_eq!(normalize_snippet_action("snippets").as_deref(), Some("snippets"));
+        assert_eq!(normalize_snippet_action("clipboard").as_deref(), Some("clipboard"));
+        assert_eq!(normalize_snippet_action("both").as_deref(), Some("both"));
+        assert_eq!(normalize_snippet_action("history"), None);
+    }
+
+    #[test]
+    fn normalize_clipboard_limit_clamps_into_range() {
+        assert_eq!(
+            normalize_clipboard_limit(&serde_json::json!(30)),
+            Some(30)
+        );
+        assert_eq!(normalize_clipboard_limit(&serde_json::json!(1)), Some(5));
+        assert_eq!(normalize_clipboard_limit(&serde_json::json!(500)), Some(100));
+        assert_eq!(normalize_clipboard_limit(&serde_json::json!(-3)), None);
+        assert_eq!(normalize_clipboard_limit(&serde_json::json!("30")), None);
+    }
+
+    #[test]
+    fn normalize_user_snippets_trims_dedupes_and_rejects_malformed() {
+        let raw = serde_json::json!([" 谢谢 ", "谢谢", "", "此致敬礼"]);
+        assert_eq!(
+            normalize_user_snippets(Some(&raw)).unwrap(),
+            vec!["谢谢".to_string(), "此致敬礼".to_string()]
+        );
+        assert_eq!(normalize_user_snippets(None).unwrap(), Vec::<String>::new());
+        assert!(normalize_user_snippets(Some(&serde_json::json!([42]))).is_err());
+        assert!(normalize_user_snippets(Some(&serde_json::json!(["x".repeat(65)]))).is_err());
+        let many: Vec<String> = (0..120).map(|i| format!("s{i}")).collect();
+        assert!(normalize_user_snippets(Some(&serde_json::json!(many))).is_err());
+    }
+
+    /// picker 段字段级合并：非法动作/非法上限按既有纪律忽略（保留旧值），
+    /// userSnippets 形状非法在 invoke 边界报错。
+    #[test]
+    fn picker_section_merges_field_by_field() {
+        let root = temp_root("picker-merge");
+        let store = ConfigStore {
+            path: root.join("voice-key-config.json"),
+        };
+
+        let merged = store.merge(&serde_json::json!({})).unwrap();
+        assert!(merged.picker.enabled);
+        assert_eq!(merged.picker.x1_action, "snippets");
+        assert_eq!(merged.picker.clipboard_limit, 30);
+
+        let merged = store
+            .merge(&serde_json::json!({
+                "picker": {
+                    "enabled": false,
+                    "x1Action": "both",
+                    "clipboardLimit": 2,
+                    "userSnippets": ["好嘞"]
+                }
+            }))
+            .unwrap();
+        assert!(!merged.picker.enabled);
+        assert_eq!(merged.picker.x1_action, "both");
+        assert_eq!(merged.picker.clipboard_limit, 5); // clamped
+        assert_eq!(merged.picker.user_snippets, vec!["好嘞".to_string()]);
+
+        // 未提及的字段保留已存值；非法动作保留旧值。
+        let merged = store
+            .merge(&serde_json::json!({ "picker": { "x1Action": "nope" } }))
+            .unwrap();
+        assert_eq!(merged.picker.x1_action, "both");
+        assert!(!merged.picker.enabled);
+
+        assert!(store
+            .merge(&serde_json::json!({ "picker": { "userSnippets": [42] } }))
+            .is_err());
     }
 
     /// 麦克风保温开关：默认开启，micKeepAlive 补丁可关可开，未提及该字段的
@@ -996,11 +1201,11 @@ mod tests {
         dir
     }
 
-    /// Seed a root with the three data files and one live log file.
+    /// Seed a root with every strict data file and one live log file.
     fn seed_root(root: &Path) {
-        fs::write(root.join("voice-key-config.json"), b"{\"app\":{}}").unwrap();
-        fs::write(root.join("voice-key-history.json"), b"[1,2,3]").unwrap();
-        fs::write(root.join("voice-key-stats.json"), b"{\"totals\":{}}").unwrap();
+        for name in STRICT_DATA_FILES {
+            fs::write(root.join(name), format!("{{\"seed\":\"{name}\"}}").as_bytes()).unwrap();
+        }
         fs::create_dir_all(root.join(LOG_DIR_NAME)).unwrap();
         fs::write(root.join(LOG_DIR_NAME).join("voice-key.log"), b"log line\n").unwrap();
     }

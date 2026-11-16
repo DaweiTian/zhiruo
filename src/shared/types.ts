@@ -163,6 +163,30 @@ export interface MouseConfig {
   middleClickPtt: boolean
 }
 
+/** 快速插入面板落点（鼠标侧键 X1/X2 默认打开的区域）。 */
+export type PickerFocusAction = 'snippets' | 'clipboard' | 'both'
+
+/**
+ * 快速插入面板（鼠标侧键 X1/X2 唤出）配置。侧键接管是 Windows-only；
+ * `userSnippets` 是手动管理的常用词（上限 100 条 × 64 字符）。
+ */
+export interface PickerConfig {
+  /** 启用侧键快速插入（关掉即 X1/X2 恢复前进/后退）。 */
+  enabled: boolean
+  /** X1 单击落点。 */
+  x1Action: PickerFocusAction
+  /** X2 单击落点。 */
+  x2Action: PickerFocusAction
+  /** 启用剪贴板采集（本地环形缓冲，只存文本）。 */
+  clipboardEnabled: boolean
+  /** 剪贴板条数上限（5–100）。 */
+  clipboardLimit: number
+  /** 从历史转写中学习常用词候选（人工确认才入库）。 */
+  learnSnippets: boolean
+  /** 手动管理的常用词。 */
+  userSnippets: string[]
+}
+
 export interface AppConfig {
   app: AppPreferences
   asr: ASRConfig
@@ -170,6 +194,7 @@ export interface AppConfig {
   hotkey: HotkeyConfig
   translation: TranslationConfig
   mouse?: MouseConfig
+  picker?: PickerConfig
 }
 
 export type LinuxDesktopSession = 'omarchy' | 'hyprland' | 'wayland' | 'x11' | 'other'

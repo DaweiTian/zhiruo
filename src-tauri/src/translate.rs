@@ -181,7 +181,8 @@ impl Drop for ClipboardGuard {
 
 /// 读剪贴板文本。空剪贴板 / 无文本格式返回 `Ok("")`；剪贴板被占用等瞬时
 /// 故障返回 `Err`，让轮询循环重试而不是误报"未选中文字"。
-fn read_clipboard_text() -> Result<String, String> {
+/// `pub(crate)`：`clipboard.rs` 的轮询降级复用同一读取口径。
+pub(crate) fn read_clipboard_text() -> Result<String, String> {
     if platform::is_hyprland_session() {
         return match std::process::Command::new("wl-paste")
             .arg("--no-newline")
@@ -206,14 +207,20 @@ fn read_clipboard_text() -> Result<String, String> {
 }
 
 /// 写剪贴板文本（Hyprland 走 `wl-copy`，其余平台走 `arboard`）。
+/// 写入成功后登记自写抑制（`clipboard::mark_self_write`），本次内容不进
+/// 最近剪贴板历史——避免自产自销。
 pub(crate) fn write_clipboard_text(text: &str) -> Result<(), String> {
     if platform::is_hyprland_session() {
-        return inject::hyprland_set_clipboard(text);
+        inject::hyprland_set_clipboard(text)?;
+        crate::clipboard::mark_self_write(text);
+        return Ok(());
     }
     let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("剪贴板不可用: {e}"))?;
     clipboard
         .set_text(text.to_string())
-        .map_err(|e| format!("写入剪贴板失败: {e}"))
+        .map_err(|e| format!("写入剪贴板失败: {e}"))?;
+    crate::clipboard::mark_self_write(text);
+    Ok(())
 }
 
 /// 模拟 Ctrl+C 把选区写入剪贴板，用哨兵 + 超时轮询判定结果。

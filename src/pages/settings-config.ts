@@ -1,7 +1,11 @@
 import { LLM_REFINE, TRANSLATION } from '@/shared/constants'
 import { DEFAULT_CLOUD_DIALECT, DEFAULT_CLOUD_PRESET } from '@/shared/cloud-asr'
-import { normalizeLLMRefineConfig, resolveLLMConnection } from '@/shared/llm-config'
-import type { AppConfig, LLMRefineConfig } from '@/shared/types'
+import {
+  normalizeLLMRefineConfig,
+  resolveLLMConnection,
+  normalizeUserGlossary,
+} from '@/shared/llm-config'
+import type { AppConfig, LLMRefineConfig, PickerConfig, PickerFocusAction } from '@/shared/types'
 
 const LLM_CONNECTION_KEYS = [
   'openai',
@@ -191,6 +195,31 @@ export function normalizeRendererConfig(loadedConfig: AppConfig): AppConfig {
     mouse: {
       middleClickPtt: loadedConfig.mouse?.middleClickPtt ?? false,
     },
+    picker: normalizePickerConfig(loadedConfig.picker),
+  }
+}
+
+const PICKER_FOCUS_ACTIONS: readonly PickerFocusAction[] = ['snippets', 'clipboard', 'both']
+
+/**
+ * 快速插入面板配置归一：非法落点退回默认，条数上限夹取 5–100，
+ * 常用词清洗与 `llmRefine.userGlossary` 同一纪律（trim / 去重 / 100 条 × 64 字符）。
+ */
+export function normalizePickerConfig(raw?: Partial<PickerConfig>): PickerConfig {
+  const pickAction = (value: unknown, fallback: PickerFocusAction): PickerFocusAction =>
+    PICKER_FOCUS_ACTIONS.find((action) => action === value) ?? fallback
+  const limit =
+    typeof raw?.clipboardLimit === 'number' && Number.isFinite(raw.clipboardLimit)
+      ? Math.min(100, Math.max(5, Math.round(raw.clipboardLimit)))
+      : 30
+  return {
+    enabled: raw?.enabled ?? true,
+    x1Action: pickAction(raw?.x1Action, 'snippets'),
+    x2Action: pickAction(raw?.x2Action, 'clipboard'),
+    clipboardEnabled: raw?.clipboardEnabled ?? true,
+    clipboardLimit: limit,
+    learnSnippets: raw?.learnSnippets ?? true,
+    userSnippets: normalizeUserGlossary(raw?.userSnippets),
   }
 }
 

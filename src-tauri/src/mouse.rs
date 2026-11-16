@@ -1,8 +1,8 @@
-//! Windows mouse hook: middle-button push-to-talk **and** capsule hover
-//! passthrough (Windows only).
+//! Windows mouse hook: middle-button push-to-talk, capsule hover passthrough
+//! and side-button quick picker (Windows only).
 //!
 //! A dedicated background thread owns a low-level mouse hook
-//! (`SetWindowsHookExW(WH_MOUSE_LL)`) and its message pump. Three independent
+//! (`SetWindowsHookExW(WH_MOUSE_LL)`) and its message pump. Four independent
 //! consumers share it:
 //!
 //! 1. **Middle-button PTT.** `WM_MBUTTONDOWN` starts a recording session and
@@ -28,6 +28,10 @@
 //!    ([`crate::hub::close_hub`]) — the standard popup-menu dismissal. The
 //!    hub's own background click already closes it in the renderer; the hook
 //!    only covers clicks that leave the hub window entirely.
+//! 4. **Side-button quick picker.** `WM_XBUTTONDOWN` / `WM_XBUTTONUP`
+//!    (X1/X2) toggle the quick-insert panel ([`crate::picker`]). Unlike the
+//!    other three consumers this branch **swallows** the event (see below),
+//!    gated by the `picker.enabled` setting ([`PICKER_SIDE_BUTTONS`]).
 //!
 //! The hook itself is installed **whenever the process runs** (decoupled from
 //! [`ENABLED`]); the middle-button branch simply does nothing while the
@@ -35,10 +39,16 @@
 //!
 //! Design notes:
 //!
-//! * **Observing only.** The hook never swallows input: every event is passed
-//!   on through `CallNextHookEx`, so middle-click paste in terminals and other
-//!   middle-button behaviors keep working (they may fire *together* with the
-//!   recording trigger — the settings copy warns about this).
+//! * **Observing only — except the side buttons.** Middle-button events (and
+//!   every other message except X1/X2 while the picker setting is on) are
+//!   passed on through `CallNextHookEx`, so middle-click paste in terminals
+//!   and other middle-button behaviors keep working (they may fire *together*
+//!   with the recording trigger — the settings copy warns about this). The
+//!   **only** branch that swallows input is the picker's X1/X2 branch
+//!   (`picker.enabled`): the hook returns 1 for those events so browsers lose
+//!   forward/back, exactly as the settings copy promises. Swallowing only
+//!   applies to `WM_XBUTTONDOWN`/`WM_XBUTTONUP` — never to the wheel, never
+//!   to left/right/middle.
 //! * **Wheel is inert.** The callback acts on `WM_MBUTTONDOWN` /
 //!   `WM_MBUTTONUP` and nothing else, so `WM_MOUSEWHEEL` / `WM_MOUSEHWHEEL` (and
 //!   every other mouse message) can never start, stop or otherwise disturb a
@@ -357,6 +367,10 @@ pub fn init(_app: &tauri::AppHandle) {}
 #[cfg(not(windows))]
 pub fn set_middle_click_ptt(_enabled: bool) {}
 
+/// 非 Windows：无 `WH_MOUSE_LL` 钩子，侧键接管不存在（设置项在 UI 层隐藏）。
+#[cfg(not(windows))]
+pub fn set_picker_side_buttons(_enabled: bool) {}
+
 #[cfg(not(windows))]
 pub fn clear_owned_session() {}
 
@@ -381,7 +395,7 @@ pub fn sync_ignore_state(_kind: CapsuleKind, _ignore: bool) {}
 #[cfg(windows)]
 pub use win::{
     clear_owned_session, init, refresh_capsule_hover, register_capsule_window, set_capsule_grab,
-    set_capsule_hit_rect, set_middle_click_ptt, sync_ignore_state,
+    set_capsule_hit_rect, set_middle_click_ptt, set_picker_side_buttons, sync_ignore_state,
 };
 
 #[cfg(windows)]
@@ -410,6 +424,12 @@ mod win {
     /// persisted `mouse.middleClickPtt` config. **Only gates the middle-button
     /// branch** — the hook itself is permanent (hover passthrough needs it).
     static ENABLED: AtomicBool = AtomicBool::new(false);
+
+    /// 快速插入面板侧键开关；镜像持久化的 `picker.enabled` 配置。开启时
+    /// X1/X2 的 down/up 被吞掉（钩子直接返回 1，不再 `CallNextHookEx`），
+    /// 目标应用的前进/后退随之失效（产品确认接受）。只门禁 X 分支——
+    /// 钩子本身依旧常驻（hover / hub 收起需要它）。
+    static PICKER_SIDE_BUTTONS: AtomicBool = AtomicBool::new(false);
 
     /// Spawn guard: the pump thread runs for the whole process lifetime.
     static THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -469,6 +489,13 @@ mod win {
         /// ([`is_dismiss_press`]): close the hub unless it landed on our own
         /// capsule windows. `root_hwnd` is captured in the hook like [`Down`].
         OutsidePress { root_hwnd: isize },
+        /// `WM_XBUTTONDOWN` while the picker setting is on: toggle the
+        /// quick-insert panel. `button` is 1 (X1) or 2 (X2) from the high word
+        /// of `mouseData`; `(x, y)` is the cursor at event time (physical px) —
+        /// the panel pops up next to the pointer. The matching
+        /// `WM_XBUTTONUP` is swallowed in the hook without an event (toggle
+        /// fires once per click).
+        SideButton { button: u8, x: i32, y: i32 },
     }
 
     /// Whether the stop decision came from a real button release or from the
@@ -557,6 +584,13 @@ mod win {
         }
     }
 
+    /// Apply the `picker.enabled` setting (X1/X2 全接管). Idempotent and
+    /// thread-safe; effective within one poll tick (≤ 5 ms). Turning it off
+    /// mid-press is safe: the X events simply pass through again.
+    pub fn set_picker_side_buttons(enabled: bool) {
+        PICKER_SIDE_BUTTONS.store(enabled, Ordering::SeqCst);
+    }
+
     /// Drop the ownership token. Called from every session start / stop /
     /// cancel / error path outside this hook (`commands.rs`) so a later middle
     /// release can only ever stop a session this hook started itself.
@@ -609,6 +643,7 @@ mod win {
                 HookEvent::Disable => handle_middle_up(StopCause::Disable),
                 HookEvent::SetIgnore { kind, ignore } => apply_ignore_cursor_events(kind, ignore),
                 HookEvent::OutsidePress { root_hwnd } => handle_outside_press(root_hwnd),
+                HookEvent::SideButton { button, x, y } => handle_side_button(button, (x, y)),
             }
         }
     }
@@ -737,6 +772,11 @@ mod win {
                 Ok(Some(HookEvent::OutsidePress { root_hwnd })) => {
                     handle_outside_press(root_hwnd);
                 }
+                // Side-button toggle during the window: orthogonal as well
+                // (picker opens/closes regardless of a held middle button).
+                Ok(Some(HookEvent::SideButton { button, x, y })) => {
+                    handle_side_button(button, (x, y));
+                }
                 // Channel closed (worker shutting down): the release is moot.
                 Ok(None) => return,
                 // The window elapsed with no re-press: the release is genuine.
@@ -793,15 +833,17 @@ mod win {
     }
 
     /// True when the given root window (top-level window under the cursor at
-    /// event time) is one of our interactive capsules: the HUD overlay or the
-    /// selection hub. The hit test itself ran in the hook with pure Win32
-    /// calls; only this comparison needs Tauri (window `hwnd`s), so it happens
-    /// here on the worker. A hidden window can never match: a hidden window is
-    /// not the root window under the cursor.
+    /// event time) is one of our interactive capsules: the HUD overlay, the
+    /// selection hub or the quick-insert picker. The hit test itself ran in
+    /// the hook with pure Win32 calls; only this comparison needs Tauri
+    /// (window `hwnd`s), so it happens here on the worker. A hidden window
+    /// can never match: a hidden window is not the root window under the
+    /// cursor.
     fn point_over_overlay(app: &AppHandle, root_hwnd: isize) -> bool {
         [
             crate::windowing::OVERLAY_WINDOW_LABEL,
             crate::windowing::HUB_WINDOW_LABEL,
+            crate::windowing::PICKER_WINDOW_LABEL,
         ]
         .iter()
         .any(|label| {
@@ -818,19 +860,36 @@ mod win {
     /// background click is the renderer's dismiss surface; the capsule's
     /// right-click toggles the hub — neither may double-fire). Re-checks
     /// [`crate::hub::is_open`] on the worker: the hub may have closed on its
-    /// own between the hook's enqueue and this decision.
+    /// own between the hook's enqueue and this decision. The same press also
+    /// dismisses an open quick-insert picker (same popup-menu discipline).
     fn handle_outside_press(root_hwnd: isize) {
-        if !crate::hub::is_open() {
-            return;
-        }
         let Some(app) = APP.get() else {
             return;
         };
         if point_over_overlay(app, root_hwnd) {
             return;
         }
-        log::debug!("mouse: outside click dismissing the selection hub");
-        crate::hub::close_hub(app);
+        if crate::hub::is_open() {
+            log::debug!("mouse: outside click dismissing the selection hub");
+            crate::hub::close_hub(app);
+        }
+        if crate::picker::is_open() {
+            log::debug!("mouse: outside click dismissing the picker");
+            crate::picker::close_picker(app);
+        }
+    }
+
+    /// Worker-side X1/X2: toggle the quick-insert panel at the pointer.
+    /// 与中键 PTT 同款守卫：设置热键录制期间不打扰。
+    fn handle_side_button(button: u8, cursor: (i32, i32)) {
+        let Some(app) = APP.get() else {
+            return;
+        };
+        let state = app.state::<crate::state::AppState>();
+        if state.hotkey_capture_active() {
+            return;
+        }
+        crate::picker::toggle(app, button, cursor);
     }
 
     // ---- hover passthrough -------------------------------------------------
@@ -1068,8 +1127,29 @@ mod win {
             || message == WM_XBUTTONDOWN as u32
     }
 
-    /// `WH_MOUSE_LL` callback. Observing only: `CallNextHookEx` always runs so
-    /// the click keeps its normal meaning in the target application.
+    /// Side-button message whitelist: `WM_XBUTTONDOWN` / `WM_XBUTTONUP` and
+    /// nothing else. Pure so it can be unit-tested without a real hook.
+    /// Same wheel-range trap as [`classify`] — an exact `==` chain only.
+    fn is_side_button(message: u32) -> bool {
+        message == WM_XBUTTONDOWN as u32 || message == WM_XBUTTONUP as u32
+    }
+
+    /// Which X button produced a `WM_XBUTTONDOWN`/`WM_XBUTTONUP`, from the
+    /// high word of `MSLLHOOKSTRUCT::mouseData` (`XBUTTON1` = 1, `XBUTTON2` =
+    /// 2). `None` for anything else (defensive: `mouseData` is untrusted
+    /// kernel input). Pure so it can be unit-tested without a real hook.
+    fn xbutton_id(mouse_data: u32) -> Option<u8> {
+        match (mouse_data >> 16) as u16 {
+            1 => Some(1),
+            2 => Some(2),
+            _ => None,
+        }
+    }
+
+    /// `WH_MOUSE_LL` callback. Every message is passed on through
+    /// `CallNextHookEx` — **except** X1/X2 while the picker setting is on,
+    /// which is swallowed (return 1) so the target app loses forward/back
+    /// (module header: the one deliberate exception to "observing only").
     ///
     /// Latency-critical (the system removes slow hooks): only local Win32
     /// calls plus a non-blocking enqueue — no Tauri calls, no locks, no I/O.
@@ -1102,11 +1182,29 @@ mod win {
             if is_hover_update(message) {
                 evaluate_hover((info.pt.x, info.pt.y));
             }
-            // Selection-hub outside-click dismiss: gated on the hub being open
-            // (one atomic load; ordinary clicks cost nothing). The hit test is
-            // the same local Win32 call pair the middle-button branch uses;
-            // the worker owns every Tauri call.
-            if crate::hub::is_open() && is_dismiss_press(message) {
+            // Quick-insert picker X1/X2: the ONE branch that swallows input.
+            // `WM_XBUTTONDOWN` toggles the panel; both down and up are
+            // withheld from the target app. Returning here also keeps the
+            // side buttons out of the outside-press dismiss below (X is the
+            // toggle gesture, never a dismissal — re-opening right after a
+            // dismiss close would be a footgun).
+            if PICKER_SIDE_BUTTONS.load(Ordering::SeqCst) && is_side_button(message) {
+                if message == WM_XBUTTONDOWN as u32 {
+                    if let Some(button) = xbutton_id(info.mouseData) {
+                        post_event(HookEvent::SideButton {
+                            button,
+                            x: info.pt.x,
+                            y: info.pt.y,
+                        });
+                    }
+                }
+                return 1;
+            }
+            // Hub / picker outside-click dismiss: gated on either panel being
+            // open (two atomic loads; ordinary clicks cost nothing). The hit
+            // test is the same local Win32 call pair the middle-button branch
+            // uses; the worker owns every Tauri call.
+            if (crate::hub::is_open() || crate::picker::is_open()) && is_dismiss_press(message) {
                 post_event(HookEvent::OutsidePress {
                     root_hwnd: root_window_at(info.pt),
                 });
@@ -1231,6 +1329,37 @@ mod win {
                     "message {message:#06x} must not dismiss the hub"
                 );
             }
+        }
+
+        /// Side-button whitelist: exactly the X down/up pair — and nothing
+        /// that sits inside `WM_MOUSEFIRST..=WM_MOUSELAST` besides them.
+        #[test]
+        fn side_button_is_x_down_and_up_only() {
+            assert!(is_side_button(WM_XBUTTONDOWN as u32));
+            assert!(is_side_button(WM_XBUTTONUP as u32));
+            for message in [
+                WM_MOUSEMOVE,
+                WM_LBUTTONDOWN,
+                WM_MBUTTONDOWN,
+                WM_MOUSEWHEEL,
+                WM_MOUSEHWHEEL,
+            ] {
+                assert!(
+                    !is_side_button(message as u32),
+                    "message {message:#06x} must not be a side button"
+                );
+            }
+        }
+
+        /// `mouseData` 的高字是 XBUTTON1/XBUTTON2 判定；防御性拒绝其余值
+        /// （钩子入参不可信）。
+        #[test]
+        fn xbutton_id_reads_high_word_of_mouse_data() {
+            assert_eq!(xbutton_id(0x0001 << 16), Some(1));
+            assert_eq!(xbutton_id(0x0002 << 16), Some(2));
+            assert_eq!(xbutton_id(0x0000 << 16), None);
+            assert_eq!(xbutton_id(0x0003 << 16), None);
+            assert_eq!(xbutton_id(0), None);
         }
 
         /// Documents *why* [`classify`] must stay an exact `==` whitelist and

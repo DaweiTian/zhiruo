@@ -20,13 +20,14 @@ pub fn inject_text(text: &str) -> Result<(), String> {
 }
 
 fn paste_via_clipboard(text: &str) -> Result<(), String> {
+    // 自写抑制：注入用的写剪贴板不进最近剪贴板历史（自产自销）。**写入前**
+    // 登记——`WM_CLIPBOARDUPDATE` 是异步通知，成功后才登记会留抢先窗口。
+    crate::clipboard::mark_self_write(text);
     let mut clipboard =
         arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))?;
     clipboard
         .set_text(text.to_string())
         .map_err(|e| format!("clipboard write failed: {e}"))?;
-    // 自写抑制：注入用的写剪贴板不进最近剪贴板历史（自产自销）。
-    crate::clipboard::mark_self_write(text);
 
     thread::sleep(Duration::from_millis(40));
 
@@ -50,11 +51,13 @@ fn paste_via_hyprland(text: &str) -> Result<(), String> {
 
 /// Write text into the Wayland clipboard via `wl-copy --sensitive` (Hyprland).
 /// Public so the selection-translation flow (translate.rs) can set / restore
-/// clipboard contents on the same path paste uses.
+/// clipboard contents on the same path paste uses. 写入前登记自写抑制
+/// （同 [`paste_via_clipboard`] 的理由）。
 pub fn hyprland_set_clipboard(text: &str) -> Result<(), String> {
     use std::io::Write;
     use std::process::Stdio;
 
+    crate::clipboard::mark_self_write(text);
     let mut child = Command::new("wl-copy")
         .arg("--sensitive")
         .env("XDG_SESSION_TYPE", "wayland")
@@ -73,8 +76,6 @@ pub fn hyprland_set_clipboard(text: &str) -> Result<(), String> {
     if !status.success() {
         return Err("wl-copy failed".into());
     }
-    // 自写抑制（同 paste_via_clipboard）。
-    crate::clipboard::mark_self_write(text);
     Ok(())
 }
 

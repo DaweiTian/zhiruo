@@ -207,20 +207,18 @@ pub(crate) fn read_clipboard_text() -> Result<String, String> {
 }
 
 /// 写剪贴板文本（Hyprland 走 `wl-copy`，其余平台走 `arboard`）。
-/// 写入成功后登记自写抑制（`clipboard::mark_self_write`），本次内容不进
-/// 最近剪贴板历史——避免自产自销。
+/// **写入前**登记自写抑制（`clipboard::mark_self_write`）——`WM_CLIPBOARDUPDATE`
+/// 是异步通知，写成功后才登记会留抢先窗口，最坏把哨兵文本记进剪贴板历史。
+/// 写失败时基线偏高一格无害（下一个用户复制会正常入库）。
 pub(crate) fn write_clipboard_text(text: &str) -> Result<(), String> {
+    crate::clipboard::mark_self_write(text);
     if platform::is_hyprland_session() {
-        inject::hyprland_set_clipboard(text)?;
-        crate::clipboard::mark_self_write(text);
-        return Ok(());
+        return inject::hyprland_set_clipboard(text);
     }
     let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("剪贴板不可用: {e}"))?;
     clipboard
         .set_text(text.to_string())
-        .map_err(|e| format!("写入剪贴板失败: {e}"))?;
-    crate::clipboard::mark_self_write(text);
-    Ok(())
+        .map_err(|e| format!("写入剪贴板失败: {e}"))
 }
 
 /// 模拟 Ctrl+C 把选区写入剪贴板，用哨兵 + 超时轮询判定结果。

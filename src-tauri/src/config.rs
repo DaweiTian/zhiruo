@@ -111,11 +111,21 @@ pub struct PickerConfig {
     pub x2_action: String,
     /// 启用剪贴板采集（本地环形缓冲，只存文本；隐私总开关）。
     pub clipboard_enabled: bool,
-    /// 剪贴板条数上限（5–100，非法值由 [`normalize_clipboard_limit`] 夹取）。
+    /// 剪贴板条数上限（5–100）。加载走 [`de_lenient_clipboard_limit`]：
+    /// 手工编辑出非法值时退回默认而不是让整份配置反序列化失败——
+    /// `load()` 的 `unwrap_or_default` 会把全部设置一起冲掉。
+    #[serde(
+        default = "default_clipboard_limit",
+        deserialize_with = "de_lenient_clipboard_limit"
+    )]
     pub clipboard_limit: u32,
     /// 从历史转写中学习常用词候选（只进候选列表，人工确认才入库）。
     pub learn_snippets: bool,
-    /// 手动管理的常用词（`userSnippets`）。
+    /// 手动管理的常用词（`userSnippets`）。加载走 [`de_lenient_user_snippets`]：
+    /// 手工编辑出非法条目时丢弃坏元素而不是让整份配置反序列化失败
+    /// （[`de_lenient_clipboard_limit`] 同一理由——`load()` 的整体回退会清掉
+    /// API key 等一切设置）。invoke 边界的严格校验在 [`normalize_user_snippets`]。
+    #[serde(default, deserialize_with = "de_lenient_user_snippets")]
     pub user_snippets: Vec<String>,
 }
 
@@ -126,11 +136,64 @@ impl Default for PickerConfig {
             x1_action: "snippets".into(),
             x2_action: "clipboard".into(),
             clipboard_enabled: true,
-            clipboard_limit: 30,
+            clipboard_limit: default_clipboard_limit(),
             learn_snippets: true,
             user_snippets: Vec::new(),
         }
     }
+}
+
+fn default_clipboard_limit() -> u32 {
+    30
+}
+
+/// `clipboardLimit` 的宽容加载：数字夹取 5–100，其余（字符串 / 负数 / null /
+/// 超出 u64）退回 [`default_clipboard_limit`]。配置文件可被手工编辑，一个
+/// 非法数字不能拖垮整份配置（`load()` 对反序列化失败的整体回退是
+/// `AppConfig::default()`，会把 API key 等一切设置一起清掉）。
+fn de_lenient_clipboard_limit<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .map(|v| v.clamp(5, 100) as u32)
+            .unwrap_or_else(default_clipboard_limit),
+        _ => default_clipboard_limit(),
+    })
+}
+
+/// `userSnippets` 的宽容加载：形状非法整体退回空表；非法条目（非字符串 /
+/// 超 64 字符）**逐条丢弃**、重复与空串清洗、超 100 条截断。与
+/// [`de_lenient_clipboard_limit`] 同一理由：手改配置不能拖垮整份配置。
+/// invoke 边界仍然走严格版 [`normalize_user_snippets`]（坏输入直接报错）。
+fn de_lenient_user_snippets<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(items) = value.as_array() else {
+        return Ok(Vec::new());
+    };
+    let mut terms: Vec<String> = Vec::new();
+    for item in items {
+        let Some(s) = item.as_str() else {
+            continue;
+        };
+        let trimmed = s.trim();
+        if trimmed.is_empty() || trimmed.chars().count() > 64 {
+            continue;
+        }
+        if !terms.iter().any(|t| t == trimmed) {
+            terms.push(trimmed.to_string());
+            if terms.len() >= 100 {
+                break;
+            }
+        }
+    }
+    Ok(terms)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1154,6 +1217,39 @@ mod tests {
         assert!(store
             .merge(&serde_json::json!({ "picker": { "userSnippets": [42] } }))
             .is_err());
+    }
+
+    /// `clipboardLimit` 宽容加载：非法数字 / 字符串 / 超界都不能拖垮整份配置
+    /// （`load()` 对反序列化失败会整体回退默认，一并清空 API key 等设置）。
+    #[test]
+    fn clipboard_limit_deserializes_leniently() {
+        let parse = |raw: &str| -> PickerConfig {
+            serde_json::from_str(raw).expect("lenient picker config must deserialize")
+        };
+        assert_eq!(parse(r#"{"clipboardLimit":50}"#).clipboard_limit, 50);
+        assert_eq!(parse(r#"{"clipboardLimit":-3}"#).clipboard_limit, 30);
+        assert_eq!(parse(r#"{"clipboardLimit":"abc"}"#).clipboard_limit, 30);
+        assert_eq!(parse(r#"{"clipboardLimit":999}"#).clipboard_limit, 100);
+        assert_eq!(parse(r#"{}"#).clipboard_limit, 30);
+    }
+
+    /// `userSnippets` 宽容加载：形状非法整体退回空表、坏条目丢弃、超限截断
+    /// ——手改配置不能拖垮整份配置（同 `clipboardLimit` 理由）。
+    #[test]
+    fn user_snippets_deserializes_leniently() {
+        let parse = |raw: &str| -> PickerConfig {
+            serde_json::from_str(raw).expect("lenient picker config must deserialize")
+        };
+        assert_eq!(
+            parse(r#"{"userSnippets":[" 好嘞 ","好嘞","",42,"此致敬礼"]}"#).user_snippets,
+            vec!["好嘞".to_string(), "此致敬礼".to_string()]
+        );
+        // 形状非法（非数组）→ 空表，而不是整份配置解析失败。
+        assert_eq!(parse(r#"{"userSnippets":42}"#).user_snippets, Vec::<String>::new());
+        assert_eq!(parse(r#"{"userSnippets":"好嘞"}"#).user_snippets, Vec::<String>::new());
+        // 超 100 条截断到 100。
+        let many = (0..120).map(|i| format!("\"s{i}\"")).collect::<Vec<_>>().join(",");
+        assert_eq!(parse(&format!(r#"{{"userSnippets":[{many}]}}"#)).user_snippets.len(), 100);
     }
 
     /// 麦克风保温开关：默认开启，micKeepAlive 补丁可关可开，未提及该字段的

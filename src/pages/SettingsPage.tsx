@@ -173,6 +173,11 @@ function isPickerConfigDirty(current: AppConfig['picker'], original: AppConfig['
   )
 }
 
+/** Select 值 → 落点字面量：非法值退回默认（命令边界不可信，包括 DOM 事件值）。 */
+function toPickerFocusAction(value: string): PickerFocusAction {
+  return value === 'snippets' || value === 'clipboard' || value === 'both' ? value : 'snippets'
+}
+
 /**
  * A stored API key is shown as a selectable placeholder. If the user inserts text without
  * replacing the whole selection (paste/mid-string caret), the placeholder plus the new text would
@@ -809,7 +814,8 @@ export default function SettingsPage() {
       isLlmRefineDirty(normalizedRefineConfig, originalConfig.llmRefine) ||
       isHotkeyConfigDirty(config.hotkey, originalConfig.hotkey) ||
       isTranslationConfigDirty(config.translation, originalConfig.translation) ||
-      isMouseConfigDirty(config.mouse, originalConfig.mouse)
+      isMouseConfigDirty(config.mouse, originalConfig.mouse) ||
+      isPickerConfigDirty(config.picker, originalConfig.picker)
 
     if (!hasPendingChanges) return
 
@@ -1090,19 +1096,22 @@ export default function SettingsPage() {
   }
 
   const handleConfirmCandidate = (candidate: string) => {
-    void window.electronAPI
-      .confirmSnippetCandidate(candidate)
-      .then((updated) => {
+    // 先冲刷未保存的草稿编辑：Rust 的确认是「往持久化列表追加」，返回值
+    // 整体回写草稿——不先存的话，正在输入的草稿会被旧持久化列表覆盖。
+    void (async () => {
+      await flushAutoSaveRef.current()
+      try {
+        const updated = await window.electronAPI.confirmSnippetCandidate(candidate)
         setSnippetCandidates((prev) => prev.filter((item) => item !== candidate))
         setUserSnippetsDraft(updated.join('\n'))
         setConfig((prev) => ({
           ...prev,
           picker: normalizePickerConfig({ ...prev.picker, userSnippets: updated }),
         }))
-      })
-      .catch((error) => {
+      } catch (error) {
         toast.error(typeof error === 'string' ? error : t('settings.picker.candidateAddFailed'))
-      })
+      }
+    })()
   }
 
   const handleClearClipboard = () => {
@@ -1528,7 +1537,8 @@ export default function SettingsPage() {
           isLlmRefineDirty(normalizedRefineConfig, currentOriginalConfig.llmRefine) ||
           isHotkeyConfigDirty(currentConfig.hotkey, currentOriginalConfig.hotkey) ||
           isTranslationConfigDirty(currentConfig.translation, currentOriginalConfig.translation) ||
-          isMouseConfigDirty(currentConfig.mouse, currentOriginalConfig.mouse)
+          isMouseConfigDirty(currentConfig.mouse, currentOriginalConfig.mouse) ||
+          isPickerConfigDirty(currentConfig.picker, currentOriginalConfig.picker)
 
         if (hasPendingChanges) {
           void flushAutoSaveRef.current()
@@ -2437,7 +2447,7 @@ export default function SettingsPage() {
                       <Select
                         value={config.picker?.x1Action ?? 'snippets'}
                         onValueChange={(value) =>
-                          handlePickerChange({ x1Action: value as PickerFocusAction })
+                          handlePickerChange({ x1Action: toPickerFocusAction(value) })
                         }
                       >
                         <SelectTrigger id="pickerX1" className="no-drag w-full">
@@ -2459,7 +2469,7 @@ export default function SettingsPage() {
                       <Select
                         value={config.picker?.x2Action ?? 'clipboard'}
                         onValueChange={(value) =>
-                          handlePickerChange({ x2Action: value as PickerFocusAction })
+                          handlePickerChange({ x2Action: toPickerFocusAction(value) })
                         }
                       >
                         <SelectTrigger id="pickerX2" className="no-drag w-full">

@@ -38,6 +38,9 @@ const DEFAULT_LIMIT: u32 = 30;
 /// 读剪贴板不构成负担）。Windows 监听线程启动失败时也走这条降级路。
 const POLL_INTERVAL: Duration = Duration::from_millis(1500);
 
+/// 采样读故障后的补采延迟（剪贴板被占用的瞬时窗口）。
+const POLL_RETRY_DELAY: Duration = Duration::from_millis(150);
+
 /// 采集总开关（镜像 `picker.clipboardEnabled`）。
 static ENABLED: AtomicBool = AtomicBool::new(true);
 
@@ -50,6 +53,11 @@ static CLIPBOARD_LOCK: Mutex<()> = Mutex::new(());
 
 /// 最近一次观察到 / 自写抑制的剪贴板内容哈希（[`hash_text`]）。
 /// `None` = 无基线（启动后第一次内容一律记录）。
+///
+/// **单槽基线的取舍**：`ClipboardGuard` 的 Drop 恢复原内容（translate.rs）
+/// 或采集关闭期滚动基线后，用户紧接着复制同一文本会被当作抑制命中而丢
+/// 一条（只是少一次置顶，不是丢内容）。要彻底消除需要按时间窗区分「抑制
+/// 期待」与「观察基线」两套状态；当前单槽实现简单且误伤面极小，接受。
 static LAST_OBSERVED: Mutex<Option<u64>> = Mutex::new(None);
 
 /// 采集线程启动闸（`init` 幂等）。
@@ -88,18 +96,31 @@ fn hash_text(text: &str) -> u64 {
 
 fn load_unlocked() -> ClipboardStore {
     match fs::read_to_string(store_path()) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Ok(raw) => match serde_json::from_str(&raw) {
+            Ok(store) => store,
+            Err(e) => {
+                // 损坏 JSON 不静默清空：留一份 .bak 保住数据（下一次 save
+                // 覆盖主文件后仍可手工找回），日志留痕但不含剪贴板正文。
+                log::warn!("clipboard: store corrupted ({e}); keeping .bak and starting empty");
+                let _ = fs::write(store_path().with_extension("json.bak"), &raw);
+                ClipboardStore::default()
+            }
+        },
         Err(_) => ClipboardStore::default(),
     }
 }
 
+/// 原子写（tmp + rename）：写中断不留半截文件——半截 JSON 会让下一次加载
+/// 走「损坏」分支把历史清掉，与「重启不丢」的承诺相悖。
 fn save_unlocked(store: &ClipboardStore) -> Result<(), String> {
     let path = store_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
 /// 启动采集（进程一次）。`enabled` / `limit` 来自当前配置，之后由
@@ -182,11 +203,27 @@ pub(crate) fn clear() -> Result<(), String> {
 }
 
 /// 读一次剪贴板并交给 [`observe`]（轮询与事件两条路的共用尾巴）。
+/// 读失败（剪贴板正被别人占用）补采一次：瞬时占用期间的用户复制不能
+/// 就此永久丢失（`WM_CLIPBOARDUPDATE` 不会为同一次复制再发一次）。
 fn poll_once() {
+    if try_poll() {
+        return;
+    }
+    std::thread::sleep(POLL_RETRY_DELAY);
+    let _ = try_poll();
+}
+
+/// 单次采样。成功（含空剪贴板）返回 true；读故障返回 false（调用方补采）。
+fn try_poll() -> bool {
     match crate::translate::read_clipboard_text() {
-        Ok(text) => observe(&text),
-        // 剪贴板被占用等瞬时故障：下一轮再试，不误报。
-        Err(e) => log::debug!("clipboard: poll read failed: {e}"),
+        Ok(text) => {
+            observe(&text);
+            true
+        }
+        Err(e) => {
+            log::debug!("clipboard: poll read failed: {e}");
+            false
+        }
     }
 }
 
@@ -206,6 +243,9 @@ fn spawn_poll_thread() {
 /// Windows 事件驱动采集：专用线程持有 message-only 窗口，
 /// `AddClipboardFormatListener` 订阅 `WM_CLIPBOARDUPDATE`，每次通知读取
 /// 当前文本交给 [`observe`]。失败返回 `Err`（调用方降级为轮询）。
+///
+/// 已知边缘：5 秒报到超时后即使监视线程随后起来了，也会与轮询双通道并存
+/// ——[`observe`] 的哈希基线兜底去重，代价只是多几次冗余读取，可接受。
 #[cfg(windows)]
 fn spawn_listener_thread() -> Result<(), ()> {
     use std::sync::mpsc;

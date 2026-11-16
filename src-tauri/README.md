@@ -445,9 +445,13 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   开关语义 toggle、贴指针弹出（`OverlayFrame` 工作区夹取，约 320×380）、`picker-update`
   事件下发常用词 + 最近剪贴板（挂载拉 `get_picker_data` 兜底首开竞态）；落点
   `snippets | clipboard | both`（X1/X2 各自配置）。**键盘导航需要输入焦点**
-  （与 hub 的 non-focusable 相反）——插入前 `restore_foreground` 把焦点还给先前
-  应用（Alt 敲击解锁 + `SetForegroundWindow`），否则 Ctrl/V 会打进面板自己。
-  常用词双来源：`picker.userSnippets`（手动，100 条 × 64 字符）+ 历史 n-gram 候选
+  （与 hub 的 non-focusable 相反）——插入前 `restore_foreground_if` 把焦点还给
+  先前应用（Alt 敲击解锁 + `SetForegroundWindow`），否则 Ctrl/V 会打进面板自己；
+  开/关 + 前台快照 + 落点由一把小锁（`PickerSession`）+ **代际守卫**罩住，
+  插入延迟期间的「点外收起→侧键重开」不会被陈旧收尾误伤。启动时独立线程
+  **预创建**面板窗口（隐藏），首次侧键按下不会被 WebView 创建堵住串行
+  mouse worker（中键弹跳窗 / Disable 时序不容失真）。常用词双来源：
+  `picker.userSnippets`（手动，100 条 × 64 字符）+ 历史 n-gram 候选
   （`ngram_candidates` 纯函数：2–6 字片段出现 ≥3 次、极大片段、含 CJK，
   人工确认才入库）。窗口生命周期归 `windowing::ensure_picker_window`（隐藏 / 重建，
   绝不销毁）。

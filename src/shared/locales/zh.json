@@ -477,7 +477,14 @@
     "clipboard": "最近剪贴板",
     "emptySnippets": "暂无常用词。可在设置里手动添加，或开启「从历史学习」。",
     "emptyClipboard": "暂无最近复制。复制文字后会出现在这里。",
-    "hint": "↑↓ 选择 · Enter 插入 · Esc 收起"
+    "hint": "↑↓ 选择 · Enter 插入 · Esc 收起",
+    "insertFailed": "插入失败，文本已复制到剪贴板，可手动粘贴",
+    "time": {
+      "now": "刚刚",
+      "minutes": "{{n}} 分钟前",
+      "hours": "{{n}} 小时前",
+      "days": "{{n}} 天前"
+    }
   },
   "tray": {
     "settings": "设置",

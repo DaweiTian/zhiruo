@@ -2185,6 +2185,9 @@ pub fn close_picker_panel(app: AppHandle) -> Result<(), String> {
 /// 后自动受益）。注入前把焦点还给先前应用——面板是可聚焦窗口，不还焦点的
 /// 话 Ctrl/V 会打进面板自己。成功才收起面板；失败保持打开可重试（文本已留
 /// 在剪贴板，`inject_text` 的粘贴路径写入后才发按键）。
+///
+/// 全程代际守卫（`picker.rs` 的 `PickerSession`）：插入延迟期间用户若
+/// 「点外收起 → 侧键重开」，本次还焦 / 收尾不碰新一代的面板与前台快照。
 #[tauri::command]
 pub async fn picker_insert(app: AppHandle, text: String) -> Result<(), String> {
     // 命令边界不可信：形状校验 + 尺寸上限（剪贴板条目上限同一口径）。
@@ -2194,11 +2197,17 @@ pub async fn picker_insert(app: AppHandle, text: String) -> Result<(), String> {
     if text.len() > 10 * 1024 {
         return Err("插入内容过长。".to_string());
     }
-    crate::picker::restore_foreground();
+    let gen = crate::picker::current_generation();
+    crate::picker::restore_foreground_if(gen);
     // 等焦点稳定（还焦点是异步生效），与 translate 流水线的写后延迟同理。
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-    inject::inject_text(&text)?;
-    crate::picker::close_picker(&app);
+    if let Err(e) = inject::inject_text(&text) {
+        // 失败不收起面板（可重试）；文本已留剪贴板（paste 路径先写后按键），
+        // 渲染层 toast 提示手动粘贴。日志只记原因，不记内容。
+        log::warn!("picker: inject failed: {e}");
+        return Err(e);
+    }
+    crate::picker::close_generation(&app, Some(gen));
     Ok(())
 }
 
@@ -2235,10 +2244,15 @@ pub fn confirm_snippet_candidate(
     Ok(merged.picker.user_snippets)
 }
 
-/// 一键清空最近剪贴板（隐私开关的一半）。
+/// 一键清空最近剪贴板（隐私开关的一半）。面板开着时刷新列表——清空后
+/// 面板不应继续显示旧条目。
 #[tauri::command]
-pub fn clear_clipboard_history() -> Result<(), String> {
-    crate::clipboard::clear()
+pub fn clear_clipboard_history(app: AppHandle) -> Result<(), String> {
+    crate::clipboard::clear()?;
+    if crate::picker::is_open() {
+        let _ = app.emit("picker-update", crate::picker::current_payload(None));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

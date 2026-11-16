@@ -16,6 +16,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { PickerClipboardEntry, PickerUpdatePayload } from '@/lib/tauri-api'
 
@@ -24,7 +26,7 @@ const USAGE_STORAGE_KEY = 'voicekey.picker.usage'
 type PickerFocus = 'snippets' | 'clipboard' | 'both'
 
 interface FlatItem {
-  /** 稳定 key：类型 + 文本（同文本只会出现在一侧）。 */
+  /** 稳定 key：类型前缀 + 文本（常用词与剪贴板同文本不冲突）。 */
   key: string
   kind: 'snippet' | 'clipboard'
   text: string
@@ -37,7 +39,10 @@ function readUsage(): Record<string, number> {
     const raw = window.localStorage.getItem(USAGE_STORAGE_KEY)
     if (!raw) return {}
     const parsed: unknown = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, number>) : {}
+    // 数组也过 typeof === 'object'：必须排除，否则会放过非法形状。
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, number>)
+      : {}
   } catch {
     return {}
   }
@@ -54,15 +59,15 @@ function bumpUsage(text: string) {
 }
 
 /** 时间标签：刚刚 / N 分钟前 / N 小时前 / N 天前（超过 7 天显示日期）。 */
-function timeLabel(timestamp: number, now: number): string {
+function timeLabel(t: TFunction, timestamp: number, now: number): string {
   const delta = Math.max(0, now - timestamp)
   const minutes = Math.floor(delta / 60_000)
-  if (minutes < 1) return 'now'
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 1) return t('picker.time.now')
+  if (minutes < 60) return t('picker.time.minutes', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
+  if (hours < 24) return t('picker.time.hours', { n: hours })
   const days = Math.floor(hours / 24)
-  if (days <= 7) return `${days}d`
+  if (days <= 7) return t('picker.time.days', { n: days })
   return new Date(timestamp).toLocaleDateString()
 }
 
@@ -125,34 +130,42 @@ export function Picker() {
       kind: 'snippet' as const,
       text,
     }))
-    for (const entry of clipboard) {
+    clipboard.forEach((entry, index) => {
       items.push({
-        key: `clipboard:${entry.timestamp}:${entry.text.slice(0, 24)}`,
+        // 序号兜底唯一性：时间戳 + 前缀可能撞车（同毫秒、同前 24 字符）。
+        key: `clipboard:${index}:${entry.timestamp}`,
         kind: 'clipboard' as const,
         text: entry.text,
-        timeLabel: timeLabel(entry.timestamp, now),
+        timeLabel: timeLabel(t, entry.timestamp, now),
       })
-    }
+    })
     return items
-  }, [sortedSnippets, clipboard, now])
+  }, [sortedSnippets, clipboard, now, t])
 
   // 落点决定初始选中项：X1 → 常用词第一条 / X2 → 剪贴板第一条 / both → 头一条。
+  // 剪贴板落点但剪贴板为空时退回头一条（不能落到「最后一条常用词」）。
   // 用户手动移动（touchedIndex）后以手动值为准；列表收缩时夹取防越界。
-  const initialIndex =
-    focus === 'clipboard' && flatItems.length > 0
-      ? Math.min(sortedSnippets.length, flatItems.length - 1)
-      : 0
+  const initialIndex = focus === 'clipboard' && clipboard.length > 0 ? sortedSnippets.length : 0
   const selectedIndex =
     flatItems.length === 0 ? 0 : Math.min(touchedIndex ?? initialIndex, flatItems.length - 1)
 
-  const insert = useCallback((item: FlatItem | undefined) => {
-    if (!item) return
-    bumpUsage(item.text)
-    // Rust 侧注入成功才收起面板；失败保持打开可重试（文本已留剪贴板）。
-    void window.electronAPI.pickerInsert(item.text).catch(() => {
-      /* 注入失败：toast 由错误事件提示，面板保持打开 */
-    })
-  }, [])
+  const insert = useCallback(
+    (item: FlatItem | undefined) => {
+      if (!item) return
+      // Rust 侧注入成功才收起面板并计使用次数；失败保持打开可重试
+      // （文本已留剪贴板）。使用计数只服务「常用词按最近使用排序」，
+      // 剪贴板条目文本可能很长（单条上限 10KB），不做键。
+      void window.electronAPI
+        .pickerInsert(item.text)
+        .then(() => {
+          if (item.kind === 'snippet') bumpUsage(item.text)
+        })
+        .catch(() => {
+          toast.error(t('picker.insertFailed'))
+        })
+    },
+    [t],
+  )
 
   const close = useCallback(() => {
     void window.electronAPI.closePickerPanel().catch(() => {})

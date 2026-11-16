@@ -11,15 +11,15 @@
 //!   / `picker.x2Action` 可改成 `snippets | clipboard | both`。
 //! * **注入**：点选条目走 `inject::inject_text`（现有通道；批次二加
 //!   `injectMode` 后自动受益）。插入前把前台窗口还给先前应用
-//!   （[`restore_foreground`]）——面板是可聚焦窗口（键盘导航需要），
-//!   不还焦点的话 Ctrl/V 会打进面板自己。
+//!   （[`restore_foreground_if`]，代际守卫）——面板是可聚焦窗口（键盘导航
+//!   需要），不还焦点的话 Ctrl/V 会打进面板自己。
 //! * **常用词**：手动管理在 `picker.userSnippets`（设置页编辑）；
 //!   从历史学的候选（[`ngram_candidates`]）只进候选列表，人工确认才入库。
 //!
 //! 窗口生命周期照 `hub.rs` 的按需重建 + 点外收起模式（`windowing.rs`）。
 
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -28,15 +28,34 @@ pub const PICKER_WINDOW_W: f64 = 320.0;
 pub const PICKER_WINDOW_H: f64 = 380.0;
 
 /// 面板是否开着（`mouse.rs` 点外收起钩子据此门禁；只读原子量）。
+/// 打开序列**开始**时就置位（`show` 之前）：建窗 / 定位期间的点外点击也要
+/// 能走到收起路径，不留「开着但点不掉」的窗口。
 static PICKER_OPEN: AtomicBool = AtomicBool::new(false);
 
-/// 打开面板前的前台窗口（`hwnd`，Windows）；插入前还焦点用。
-/// `0` = 未知（不还焦点，注入打到当前焦点）。
-static PREV_FOREGROUND: Mutex<isize> = Mutex::new(0);
+/// 面板会话状态。一把小锁罩住「开/关 + 代际 + 前台快照 + 落点」的组合变更，
+/// 锁内只动字段——不碰窗口 / 磁盘 / Win32（无锁序风险）。
+///
+/// **代际**（`open_gen`，0 = 关闭）让跨线程收尾只作用于自己那一代：
+/// `picker_insert` 的插入后收起、打开序列尾部的竞态复查都带代际，用户在
+/// 插入延迟期间「点外收起 → 侧键重开」时，陈旧的收尾不会把刚重开的面板
+/// 藏掉，前台快照也不会串到新一代头上（否则 Ctrl/V 会打进面板自己）。
+struct PickerSession {
+    open_gen: u64,
+    /// 打开面板前的前台窗口（`hwnd`，Windows）；插入前还焦点用。0 = 未知。
+    prev_foreground: isize,
+    /// 最近一次打开的落点（`get_picker_data` 兜底：`picker-update` 可能
+    /// 先于渲染层监听器到达——面板首开时 React 还没挂载）。
+    focus: PickerFocus,
+}
 
-/// 最近一次打开面板的落点（`get_picker_data` 兜底用：`picker-update` 事件
-/// 可能先于渲染层监听器到达——面板首开时 React 还没挂载）。
-static LAST_FOCUS: Mutex<PickerFocus> = Mutex::new(PickerFocus::Both);
+static SESSION: Mutex<PickerSession> = Mutex::new(PickerSession {
+    open_gen: 0,
+    prev_foreground: 0,
+    focus: PickerFocus::Both,
+});
+
+/// 代际发号器（0 保留给「关闭」，从 1 起）。
+static NEXT_GEN: AtomicU64 = AtomicU64::new(1);
 
 /// 面板落点区（X1/X2 的 `snippets | clipboard | both`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,39 +114,90 @@ pub fn toggle<R: Runtime>(app: &AppHandle<R>, button: u8, cursor: (i32, i32)) {
     open_picker(app, focus, cursor);
 }
 
-/// 弹出面板：定位（贴指针 + 工作区夹取）→ 显示 → 下发数据。
+/// 弹出面板：登记会话代际 → 定位（贴指针 + 工作区夹取）→ 显示 → 下发数据。
 /// `cursor` 是钩子记录的物理像素坐标。
+///
+/// 只在 `mouse.rs` 的串行 worker 上调用（toggle 的 FIFO 语义靠它保证）；
+/// 重活（WebView 首次建窗）已由启动预热兜底（`lib.rs`），此处只剩轻操作。
 pub fn open_picker<R: Runtime>(app: &AppHandle<R>, focus: PickerFocus, cursor: (i32, i32)) {
-    if is_open() {
-        return;
-    }
+    let gen = {
+        let mut session = SESSION.lock().unwrap_or_else(PoisonError::into_inner);
+        if session.open_gen != 0 {
+            return;
+        }
+        session.open_gen = NEXT_GEN.fetch_add(1, Ordering::SeqCst);
+        session.prev_foreground = current_foreground();
+        session.focus = focus;
+        // 置位在 show 之前：建窗 / 定位期间的点外点击也要能走到收起路径。
+        PICKER_OPEN.store(true, Ordering::SeqCst);
+        session.open_gen
+    };
+
     let Some(window) = crate::windowing::ensure_picker_window(app) else {
         log::warn!("picker: picker window unavailable");
+        rollback_open(gen);
         let _ = app.emit("error", json!({ "message": "快速插入面板窗口不可用。" }));
         return;
     };
-
-    remember_foreground();
     let (px, py) = cursor;
     place_picker_window(app, &window, (px as f64, py as f64));
     crate::windowing::harden_overlay_window(&window);
     if let Err(e) = window.show() {
         log::warn!("picker: show failed: {e}");
+        rollback_open(gen);
         return;
     }
     // 键盘导航需要输入焦点（hub 是纯点击面板所以 non-focusable，这里相反）。
     let _ = window.set_focus();
-    PICKER_OPEN.store(true, Ordering::SeqCst);
-    *LAST_FOCUS.lock().unwrap_or_else(PoisonError::into_inner) = focus;
+
+    // 竞态复查：建窗 / show 期间被收起（点外 / Esc / 插入收尾）的话把窗口
+    // 藏回去，PICKER_OPEN 跟随最新状态——不把「已关」的会话复活成幽灵面板。
+    {
+        let session = SESSION.lock().unwrap_or_else(PoisonError::into_inner);
+        if session.open_gen != gen {
+            drop(session);
+            let _ = window.hide();
+            return;
+        }
+    }
 
     let payload = picker_payload(focus);
     let _ = app.emit("picker-update", payload);
 }
 
-/// 收起面板：隐藏窗口、清掉前台快照。幂等，任意路径可调。
+/// 打开序列中途失败的回滚：仅当仍是本代时清会话（不误伤后来者）。
+fn rollback_open(gen: u64) {
+    let mut session = SESSION.lock().unwrap_or_else(PoisonError::into_inner);
+    if session.open_gen == gen {
+        session.open_gen = 0;
+        session.prev_foreground = 0;
+        PICKER_OPEN.store(false, Ordering::SeqCst);
+    }
+}
+
+/// 收起面板：隐藏窗口、清会话。幂等，任意路径可调（Esc / 点外 / CloseRequested）。
 pub fn close_picker<R: Runtime>(app: &AppHandle<R>) {
-    PICKER_OPEN.store(false, Ordering::SeqCst);
-    *PREV_FOREGROUND.lock().unwrap_or_else(PoisonError::into_inner) = 0;
+    close_generation(app, None);
+}
+
+/// 代际条件收起：`want = Some(gen)` 只收那一代（`picker_insert` 的插入收尾），
+/// `None` 无条件收。收不动时（会话已关 / 已换代）什么都不做。
+pub(crate) fn close_generation<R: Runtime>(app: &AppHandle<R>, want: Option<u64>) {
+    {
+        let mut session = SESSION.lock().unwrap_or_else(PoisonError::into_inner);
+        if session.open_gen == 0 {
+            return;
+        }
+        if let Some(g) = want {
+            if session.open_gen != g {
+                return;
+            }
+        }
+        session.open_gen = 0;
+        session.prev_foreground = 0;
+        session.focus = PickerFocus::Both;
+        PICKER_OPEN.store(false, Ordering::SeqCst);
+    }
     if let Some(window) = app.get_webview_window(crate::windowing::PICKER_WINDOW_LABEL) {
         if window.is_visible().unwrap_or(false) {
             if let Err(e) = window.hide() {
@@ -135,6 +205,11 @@ pub fn close_picker<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     }
+}
+
+/// 当前会话代际（0 = 关闭）。`picker_insert` 开场快照，收尾时条件收起用。
+pub(crate) fn current_generation() -> u64 {
+    SESSION.lock().unwrap_or_else(PoisonError::into_inner).open_gen
 }
 
 /// 面板数据：落点 + 常用词 + 最近剪贴板（最新在前）。命令边界/事件载荷，
@@ -159,10 +234,10 @@ fn picker_payload(focus: PickerFocus) -> Value {
 }
 
 /// 供 `commands.rs` 的 `get_picker_data` 使用（面板/设置页按需拉取；
-/// `focus = None` 时取最近一次打开的落点）。
+/// `focus = None` 时取当前会话的落点）。文件 I/O 在锁外（picker_payload）。
 pub(crate) fn current_payload(focus: Option<PickerFocus>) -> Value {
     let focus = focus.unwrap_or_else(|| {
-        *LAST_FOCUS.lock().unwrap_or_else(PoisonError::into_inner)
+        SESSION.lock().unwrap_or_else(PoisonError::into_inner).focus
     });
     picker_payload(focus)
 }
@@ -183,12 +258,6 @@ fn place_picker_window<R: Runtime>(
     }
 }
 
-/// 记住当前前台窗口（打开面板瞬间），插入前 [`restore_foreground`] 还回去。
-fn remember_foreground() {
-    let mut slot = PREV_FOREGROUND.lock().unwrap_or_else(PoisonError::into_inner);
-    *slot = current_foreground();
-}
-
 #[cfg(windows)]
 fn current_foreground() -> isize {
     use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
@@ -200,14 +269,17 @@ fn current_foreground() -> isize {
     0
 }
 
-/// 插入前把焦点还给先前应用。Windows：先敲 Alt 解锁前台切换限制再
-/// `SetForegroundWindow`。找不到先前窗口就什么都不做——注入会打到当前
-/// 焦点。调用方（`commands::picker_insert`）在隐藏面板后调用。
-pub(crate) fn restore_foreground() {
+/// 插入前把焦点还给先前应用——仅当会话仍是 `gen` 那一代（会话已被关掉 /
+/// 已换代时焦点已随 hide 归还，或者快照属于新一代，动它会把新会话的
+/// 还焦能力偷走）。Windows：先敲 Alt 解锁前台切换限制再 `SetForegroundWindow`。
+pub(crate) fn restore_foreground_if(gen: u64) {
     let hwnd = {
-        let mut slot = PREV_FOREGROUND.lock().unwrap_or_else(PoisonError::into_inner);
-        let value = *slot;
-        *slot = 0;
+        let mut session = SESSION.lock().unwrap_or_else(PoisonError::into_inner);
+        if session.open_gen != gen {
+            return;
+        }
+        let value = session.prev_foreground;
+        session.prev_foreground = 0;
         value
     };
     restore_foreground_hwnd(hwnd);

@@ -477,7 +477,14 @@
     "clipboard": "Recent clipboard",
     "emptySnippets": "No snippets yet. Add them in Settings, or turn on “Learn from history”.",
     "emptyClipboard": "Nothing copied yet. Copied text will show up here.",
-    "hint": "↑↓ move · Enter insert · Esc close"
+    "hint": "↑↓ move · Enter insert · Esc close",
+    "insertFailed": "Insert failed — the text is on your clipboard, paste it manually",
+    "time": {
+      "now": "just now",
+      "minutes": "{{n}} min ago",
+      "hours": "{{n}} h ago",
+      "days": "{{n}} d ago"
+    }
   },
   "tray": {
     "settings": "Settings",

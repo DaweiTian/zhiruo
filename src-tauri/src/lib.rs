@@ -212,6 +212,16 @@ pub fn run() {
                 config.picker.clipboard_enabled,
                 config.picker.clipboard_limit,
             );
+            // 预创建面板窗口（隐藏）：首次侧键按下时串行 mouse worker 只剩
+            // 定位 / show 的轻活，不会被 WebView 创建堵住——worker 一旦阻塞，
+            // 中键 PTT 的弹跳窗时序与 Disable 立即停止的语义都会失真。
+            // 窗口创建必须离开主线程（wry#583），独立线程预热最稳。
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    crate::windowing::ensure_picker_window(&handle);
+                });
+            }
             // The HUD capsule is an always-on standby launcher now. The show
             // path re-applies the Windows hardening around `show()` and honors
             // the tray "hide floating capsule" toggle.

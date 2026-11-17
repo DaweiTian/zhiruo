@@ -13,6 +13,7 @@ import {
   isRefineConfigComplete,
   isRefineConnectionCacheFresh,
   markRefineConnectionValidated,
+  normalizeInjectConfig,
   normalizePickerConfig,
   readRefineFeatureFlags,
   reconcileRefineFeaturesAfterConnectionChange,
@@ -505,5 +506,17 @@ describe('picker config normalization', () => {
     const long = 'x'.repeat(256)
     expect(normalizePickerConfig({ userSnippets: [long] }).userSnippets).toEqual([long])
     expect(normalizePickerConfig({ userSnippets: ['x'.repeat(257)] }).userSnippets).toEqual([])
+  })
+})
+
+describe('inject config normalization', () => {
+  it('keeps valid inject modes and falls back to auto', () => {
+    expect(normalizeInjectConfig({ mode: 'paste' }).mode).toBe('paste')
+    expect(normalizeInjectConfig({ mode: 'type' }).mode).toBe('type')
+    expect(normalizeInjectConfig({ mode: 'clipboard' }).mode).toBe('clipboard')
+    expect(normalizeInjectConfig({ mode: 'auto' }).mode).toBe('auto')
+    expect(normalizeInjectConfig({ mode: 'keybd' as never }).mode).toBe('auto')
+    expect(normalizeInjectConfig({}).mode).toBe('auto')
+    expect(normalizeInjectConfig().mode).toBe('auto')
   })
 })

@@ -42,6 +42,9 @@ export function HUD() {
   const labelText = t('hud.holdToTalk')
   const [overlayState, setOverlayState] = useState<OverlayState>({ status: 'idle' })
   const [isVisible, setIsVisible] = useState(false)
+  /** 注入兼容回退的软提示（`inject-fallback`）：只落剪贴板 / 失败时短暂显示。 */
+  const [injectHint, setInjectHint] = useState<'copied' | 'failed' | null>(null)
+  const injectHintTimerRef = useRef<number | null>(null)
   /** 手势阶段：用于给待机胶囊提供显式按压反馈（pending / holding 时收缩）。 */
   const [gesturePhase, setGesturePhase] = useState<DragPhase>('idle')
   /**
@@ -226,9 +229,19 @@ export function HUD() {
       }
     })
 
+    // 注入兼容回退（设计 2.2）：注入只落剪贴板（clipboard 模式 / auto 兜底）
+    // 或失败时，Rust 发 `inject-fallback`，本窗（常驻待机胶囊旁）软提示。
+    const removeInjectFallbackListener = window.electronAPI.onInjectFallback((payload) => {
+      setInjectHint(payload.reason === 'failed' ? 'failed' : 'copied')
+      if (injectHintTimerRef.current !== null) clearTimeout(injectHintTimerRef.current)
+      injectHintTimerRef.current = window.setTimeout(() => setInjectHint(null), 4000)
+    })
+
     return () => {
       removeOverlayUpdateListener?.()
       removeAudioLevelListener?.()
+      removeInjectFallbackListener?.()
+      if (injectHintTimerRef.current !== null) clearTimeout(injectHintTimerRef.current)
     }
   }, [])
 
@@ -662,6 +675,31 @@ export function HUD() {
 
   return (
     <div className="pointer-events-none fixed inset-0 flex items-center justify-center">
+      {/* 注入回退软提示（设计 2.2）：常驻胶囊旁的小提示条，4 秒自隐。
+          绝对定位不进 flex 行——窗口中心恒留给待机胶囊，不得被挤偏。
+          **贴边是半隐几何**（窗口中线 = 工作区边，半窗在屏外；DOCK_TRANSLATE
+          只把胶囊本体拉回屏内）：提示必须按 dockEdge 选屏内半区——右贴边只
+          有 x<140 可见故翻到中心左侧，下/上贴边只有 y<32 / y>32 可见故贴
+          上/下缘；自由悬浮与左/右贴边放中心右侧（胶囊半缘 37px < 40px 不压
+          胶囊），max-w 96px 卡在可见半区内，长文案自动折 2 行。 */}
+      {injectHint && (
+        <div
+          className={cn(
+            'absolute max-w-[96px] rounded-xl bg-popover/95 px-2 py-1 text-center text-[10px]',
+            'leading-tight text-popover-foreground ring-1 ring-border shadow-sm',
+            'transition-opacity duration-200',
+            isVisible ? 'opacity-100' : 'opacity-0',
+            dockEdge === 'right' ? 'right-1/2 mr-[40px]' : 'left-1/2 ml-[40px]',
+            dockEdge === 'bottom'
+              ? 'top-[8px]'
+              : dockEdge === 'top'
+                ? 'bottom-[8px]'
+                : 'top-1/2 -translate-y-1/2',
+          )}
+        >
+          {injectHint === 'failed' ? t('hud.injectFailed') : t('hud.injectCopied')}
+        </div>
+      )}
       {/* 胶囊热区盒：hover 穿透下唯一可交互的面（pointerdown / dblclick）与热区
           测量来源（`set_overlay_hit_rect`）。贴边贴齐位移（DOCK_TRANSLATE）从按钮
           移到本盒：热区必须跟着视觉胶囊走，而按钮上的 `translate` 只动视觉、不动

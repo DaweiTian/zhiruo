@@ -371,33 +371,36 @@ function Section({
                     </span>
                   )}
                 </button>
-                {onPin && (
+                {/* 动作按钮纵向排列（0.12 用户拍板）：两枚小图标上下叠，少挤正文宽度。
+                    剪贴板条目 = 固定（上）+ 删除（下）；常用词条目 = 取消固定。 */}
+                <div className="flex shrink-0 flex-col gap-0.5">
+                  {onPin && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      aria-label={t('picker.pin')}
+                      title={t('picker.pin')}
+                      className="rounded-md p-0.5 text-muted-foreground/70 transition-colors hover:bg-primary/15 hover:text-primary"
+                      onClick={() => onPin(item)}
+                    >
+                      <Pin className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     tabIndex={-1}
-                    aria-label={t('picker.pin')}
-                    title={t('picker.pin')}
-                    className="shrink-0 rounded-md p-1 text-muted-foreground/70 transition-colors hover:bg-primary/15 hover:text-primary"
-                    onClick={() => onPin(item)}
+                    aria-label={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
+                    title={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
+                    className="rounded-md p-0.5 text-muted-foreground/70 transition-colors hover:bg-destructive/15 hover:text-destructive"
+                    onClick={() => onDelete(item)}
                   >
-                    <Pin className="h-3.5 w-3.5" />
+                    {item.kind === 'clipboard' ? (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <PinOff className="h-3.5 w-3.5" />
+                    )}
                   </button>
-                )}
-                {/* 剪贴板条目 = 删除（Trash）；常用词条目 = 取消固定（PinOff）。 */}
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  aria-label={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
-                  title={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
-                  className="shrink-0 rounded-md p-1 text-muted-foreground/70 transition-colors hover:bg-destructive/15 hover:text-destructive"
-                  onClick={() => onDelete(item)}
-                >
-                  {item.kind === 'clipboard' ? (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  ) : (
-                    <PinOff className="h-3.5 w-3.5" />
-                  )}
-                </button>
+                </div>
               </div>
             )
           })}

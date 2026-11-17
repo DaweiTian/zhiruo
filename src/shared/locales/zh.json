@@ -334,6 +334,16 @@
         "arabic": "العربية"
       }
     },
+    "inject": {
+      "title": "文本注入",
+      "description": "转写与速插文本如何进入目标应用。游戏、远程桌面等吃不下 Ctrl/V 的场景可在此换模式。",
+      "mode": "注入模式",
+      "modeAuto": "自动（逐级回退）",
+      "modePaste": "粘贴（Ctrl/V）",
+      "modeType": "逐字键入",
+      "modeClipboard": "仅复制到剪贴板",
+      "modeHelp": "自动：粘贴失败改逐字键入，再失败只写剪贴板并提示手动粘贴——只能捕获报错，检测不到「快捷键静默没粘上」。逐字键入不碰剪贴板（多行按回车逐行落地），适合游戏 / 远程桌面 / 英文文本；中文依赖输入法状态，建议用粘贴。任何模式下注入失败时文本都会尽量留在剪贴板。"
+    },
     "troubleshooting": "故障排查",
     "logsDescription": "日志仅保存在本地，默认保留 {{days}} 天，单个文件最大 {{size}} MB。仅记录警告及以上级别，避免无意义日志占用磁盘。",
     "viewLogs": "查看日志",
@@ -443,6 +453,8 @@
     "finish": "完成",
     "cancel": "取消",
     "holdToTalk": "按住说话",
+    "injectCopied": "已复制，请手动粘贴",
+    "injectFailed": "注入失败，文本已在剪贴板",
     "listening": "正在听",
     "thinking": "处理中...",
     "transcribing": "识别中",

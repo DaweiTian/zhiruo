@@ -334,6 +334,16 @@
         "arabic": "العربية"
       }
     },
+    "inject": {
+      "title": "Text injection",
+      "description": "How dictation and quick-insert text reaches the target app. Switch modes here if the app swallows Ctrl+V (games, remote desktops).",
+      "mode": "Injection mode",
+      "modeAuto": "Auto (step-down fallback)",
+      "modePaste": "Paste (Ctrl+V)",
+      "modeType": "Type character by character",
+      "modeClipboard": "Copy to clipboard only",
+      "modeHelp": "Auto: fall back to typed input when paste errors, then to clipboard-only with a manual-paste hint — it can only catch errors, not a silently ignored keystroke. Typed input never touches the clipboard (multi-line text is entered line by line with real Enters); best for games / remote desktops / English text. Chinese depends on the IME — prefer Paste. In every mode a failed injection leaves the text on the clipboard."
+    },
     "troubleshooting": "Troubleshooting",
     "logsDescription": "Logs are stored locally for {{days}} days. Each log file is limited to {{size}} MB. Only warnings and above are recorded, keeping routine chatter off the disk.",
     "viewLogs": "View Logs",
@@ -443,6 +453,8 @@
     "finish": "Finish",
     "cancel": "Cancel",
     "holdToTalk": "Hold to talk",
+    "injectCopied": "Copied — paste it manually",
+    "injectFailed": "Injection failed — text is on the clipboard",
     "listening": "Listening",
     "thinking": "Thinking...",
     "transcribing": "Transcribing",

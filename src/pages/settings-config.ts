@@ -6,7 +6,14 @@ import {
   normalizeUserGlossary,
   MAX_SNIPPET_LENGTH,
 } from '@/shared/llm-config'
-import type { AppConfig, LLMRefineConfig, PickerConfig, PickerFocusAction } from '@/shared/types'
+import type {
+  AppConfig,
+  InjectConfig,
+  InjectMode,
+  LLMRefineConfig,
+  PickerConfig,
+  PickerFocusAction,
+} from '@/shared/types'
 
 const LLM_CONNECTION_KEYS = [
   'openai',
@@ -197,10 +204,19 @@ export function normalizeRendererConfig(loadedConfig: AppConfig): AppConfig {
       middleClickPtt: loadedConfig.mouse?.middleClickPtt ?? false,
     },
     picker: normalizePickerConfig(loadedConfig.picker),
+    inject: normalizeInjectConfig(loadedConfig.inject),
   }
 }
 
 const PICKER_FOCUS_ACTIONS: readonly PickerFocusAction[] = ['snippets', 'clipboard', 'both', 'hub']
+const INJECT_MODES: readonly InjectMode[] = ['auto', 'paste', 'type', 'clipboard']
+
+/** 注入模式归一：非法值退回 `auto`（与 Rust `normalize_inject_mode` 同一口径）。 */
+export function normalizeInjectConfig(raw?: Partial<InjectConfig>): InjectConfig {
+  return {
+    mode: INJECT_MODES.find((mode) => mode === raw?.mode) ?? 'auto',
+  }
+}
 
 /**
  * 快速插入面板配置归一：非法落点退回默认，条数上限夹取 5–100，

@@ -190,6 +190,14 @@ export interface PickerConfig {
   userSnippets: string[]
 }
 
+/** 文本注入模式（功能方案设计 2.2）：`auto` = paste → type → clipboard 逐级兜底。 */
+export type InjectMode = 'auto' | 'paste' | 'type' | 'clipboard'
+
+/** 文本注入兼容回退配置（`inject` 段）。 */
+export interface InjectConfig {
+  mode: InjectMode
+}
+
 export interface AppConfig {
   app: AppPreferences
   asr: ASRConfig
@@ -198,6 +206,7 @@ export interface AppConfig {
   translation: TranslationConfig
   mouse?: MouseConfig
   picker?: PickerConfig
+  inject?: InjectConfig
 }
 
 export type LinuxDesktopSession = 'omarchy' | 'hyprland' | 'wayland' | 'x11' | 'other'

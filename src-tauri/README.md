@@ -474,7 +474,9 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   （侧键 X1/X2 落点 `snippets | clipboard | both | hub`、剪贴板采集、
   常用词 `userSnippets`，normalizer 与 userGlossary
   同一纪律、单条 256 字符；0.10.x 的 `hubButton` 遗留键加载时迁移成落点 `hub`，
-  旧语义 hub 压过落点故行为等价）；手改易错字段走宽容加载 `de_lenient_*`，非法值退默认不整份冲掉）。**配置写入线程安全**：
+  旧语义 hub 压过落点故行为等价）；`inject` 段含文本注入模式
+  （`mode ∈ auto | paste | type | clipboard`，设计 2.2 兼容回退，段级与字段级
+  双层宽容加载）；手改易错字段走宽容加载 `de_lenient_*`，非法值退默认不整份冲掉）。**配置写入线程安全**：
   所有写入口（`merge`：`set_config` 及其快捷键回滚、`test_refine_connection`、
   `set_app_language`、overlay 显隐 flag / 拖拽位置持久化）的
   load → mutate → save 全程持进程级 `CONFIG_LOCK`（与 `stats.rs` 的 `STATS_LOCK`

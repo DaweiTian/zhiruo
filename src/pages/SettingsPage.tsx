@@ -18,6 +18,7 @@ import {
   KeyRound,
   MousePointer,
   Palette,
+  ClipboardPaste,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -51,6 +52,7 @@ import type {
   AppConfig,
   CloudDialect,
   FillerCleanupMode,
+  InjectMode,
   LLMRefineConfig,
   LLMProvider,
   LinuxIntegrationStatus,
@@ -88,6 +90,7 @@ import {
   isRefineConfigComplete,
   isRefineConnectionCacheFresh,
   markRefineConnectionValidated,
+  normalizeInjectConfig,
   normalizePickerConfig,
   normalizeRendererConfig,
   reconcileRefineFeaturesAfterConnectionChange,
@@ -172,6 +175,15 @@ function isPickerConfigDirty(current: AppConfig['picker'], original: AppConfig['
     JSON.stringify(normalizePickerConfig(current)) !==
     JSON.stringify(normalizePickerConfig(original))
   )
+}
+
+function isInjectConfigDirty(current: AppConfig['inject'], original: AppConfig['inject']): boolean {
+  return normalizeInjectConfig(current).mode !== normalizeInjectConfig(original).mode
+}
+
+/** Select 值 → 注入模式字面量：非法值退回 `auto`（命令边界不可信）。 */
+function toInjectMode(value: string): InjectMode {
+  return value === 'paste' || value === 'type' || value === 'clipboard' ? value : 'auto'
 }
 
 /** Select 值 → 落点字面量：非法值退回默认（命令边界不可信，包括 DOM 事件值）。 */
@@ -361,6 +373,7 @@ export default function SettingsPage() {
     translation: defaultTranslationConfig,
     mouse: { middleClickPtt: false },
     picker: normalizePickerConfig(),
+    inject: normalizeInjectConfig(),
   })
 
   const [originalConfig, setOriginalConfig] = useState<AppConfig | null>(null)
@@ -687,6 +700,7 @@ export default function SettingsPage() {
     )
     const mouseDirty = isMouseConfigDirty(currentConfig.mouse, currentOriginalConfig.mouse)
     const pickerDirty = isPickerConfigDirty(currentConfig.picker, currentOriginalConfig.picker)
+    const injectDirty = isInjectConfigDirty(currentConfig.inject, currentOriginalConfig.inject)
     const refineError = refineDirty ? getRefineErrorMessage(normalizedRefineConfig) : null
     const hotkeyError = hotkeyDirty ? getHotkeyErrorMessage(currentConfig.hotkey) : null
 
@@ -723,6 +737,10 @@ export default function SettingsPage() {
 
     if (pickerDirty) {
       patch.picker = normalizePickerConfig(currentConfig.picker)
+    }
+
+    if (injectDirty) {
+      patch.inject = normalizeInjectConfig(currentConfig.inject)
     }
 
     const invalidMessage = hotkeyError ?? refineError
@@ -818,7 +836,8 @@ export default function SettingsPage() {
       isHotkeyConfigDirty(config.hotkey, originalConfig.hotkey) ||
       isTranslationConfigDirty(config.translation, originalConfig.translation) ||
       isMouseConfigDirty(config.mouse, originalConfig.mouse) ||
-      isPickerConfigDirty(config.picker, originalConfig.picker)
+      isPickerConfigDirty(config.picker, originalConfig.picker) ||
+      isInjectConfigDirty(config.inject, originalConfig.inject)
 
     if (!hasPendingChanges) return
 
@@ -1541,7 +1560,8 @@ export default function SettingsPage() {
           isHotkeyConfigDirty(currentConfig.hotkey, currentOriginalConfig.hotkey) ||
           isTranslationConfigDirty(currentConfig.translation, currentOriginalConfig.translation) ||
           isMouseConfigDirty(currentConfig.mouse, currentOriginalConfig.mouse) ||
-          isPickerConfigDirty(currentConfig.picker, currentOriginalConfig.picker)
+          isPickerConfigDirty(currentConfig.picker, currentOriginalConfig.picker) ||
+          isInjectConfigDirty(currentConfig.inject, currentOriginalConfig.inject)
 
         if (hasPendingChanges) {
           void flushAutoSaveRef.current()
@@ -2389,6 +2409,37 @@ export default function SettingsPage() {
                   onChange={(checked) => void handleTranslationEnabledChange(checked)}
                 />
               </div>
+            </div>
+          </SectionCard>
+
+          {/* 文本注入（设计 2.2：兼容回退，全平台） */}
+          <SectionCard
+            icon={<ClipboardPaste className="h-[18px] w-[18px]" />}
+            title={t('settings.inject.title')}
+            desc={t('settings.inject.description')}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="injectMode">{t('settings.inject.mode')}</Label>
+              <Select
+                value={config.inject?.mode ?? 'auto'}
+                onValueChange={(value) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    inject: normalizeInjectConfig({ mode: toInjectMode(value) }),
+                  }))
+                }
+              >
+                <SelectTrigger id="injectMode" className="no-drag w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{t('settings.inject.modeAuto')}</SelectItem>
+                  <SelectItem value="paste">{t('settings.inject.modePaste')}</SelectItem>
+                  <SelectItem value="type">{t('settings.inject.modeType')}</SelectItem>
+                  <SelectItem value="clipboard">{t('settings.inject.modeClipboard')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">{t('settings.inject.modeHelp')}</p>
             </div>
           </SectionCard>
 

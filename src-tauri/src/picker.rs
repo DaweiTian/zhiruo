@@ -10,8 +10,8 @@
 //! * **落点**：X1 默认「常用词」区、X2 默认「剪贴板」区；`picker.x1Action`
 //!   / `picker.x2Action` 可改成 `snippets | clipboard | both | hub`
 //!   （`hub` 不开本面板，`mouse.rs` 路由到选区快捷 hub）。
-//! * **注入**：点选条目走 `inject::inject_text`（现有通道；批次二加
-//!   `injectMode` 后自动受益）。插入前把前台窗口还给先前应用
+//! * **注入**：点选条目走 `inject::inject_text_with_mode`（按 `inject.mode`
+//!   分派，设计 2.2 兼容回退）。插入前把前台窗口还给先前应用
 //!   （[`restore_foreground_if`]，代际守卫）——面板是可聚焦窗口（键盘导航
 //!   需要），不还焦点的话 Ctrl/V 会打进面板自己。
 //! * **常用词**：手动管理在 `picker.userSnippets`（设置页编辑；0.11 面板

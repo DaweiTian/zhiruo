@@ -6,17 +6,92 @@ use std::time::Duration;
 
 /// Inject text into the focused application.
 /// Windows/macOS: clipboard paste (best fidelity for CJK + multiline).
-/// Hyprland: wl-copy --sensitive + wtype paste.
-pub fn inject_text(text: &str) -> Result<(), String> {
+/// Hyprland: wl-copy --sensitive + Shift+Insert.
+///
+/// 注入结果见 [`InjectOutcome`]：`clipboard` 模式与 `auto` 兜底只保证文本
+/// 进剪贴板（调用方发 `inject-fallback` 让 HUD 提示手动粘贴）。**失败契约**：
+/// `Err` 时尽力把文本留在剪贴板（[`copy_to_clipboard_only`]），用户始终可以
+/// 手动粘贴兜底。
+pub fn inject_text_with_mode(text: &str, mode: &str) -> Result<InjectOutcome, String> {
     if text.trim().is_empty() {
-        return Ok(());
+        return Ok(InjectOutcome::Injected);
     }
+    let result = match mode {
+        "type" => inject_text_typed(text).map(|_| InjectOutcome::Injected),
+        "clipboard" => copy_to_clipboard_only(text).map(|_| InjectOutcome::Copied),
+        "paste" => paste_text(text).map(|_| InjectOutcome::Injected),
+        // `auto`（含未知值）：paste → type → clipboard 逐级兜底（设计 2.2）。
+        _ => match paste_text(text) {
+            Ok(()) => Ok(InjectOutcome::Injected),
+            Err(paste_err) => {
+                log::warn!("inject auto: paste failed ({paste_err}), trying typed input");
+                match inject_text_typed(text) {
+                    Ok(()) => Ok(InjectOutcome::Injected),
+                    Err(type_err) => {
+                        log::warn!("inject auto: typed failed ({type_err}), clipboard fallback");
+                        copy_to_clipboard_only(text).map(|_| InjectOutcome::Copied)
+                    }
+                }
+            }
+        },
+    };
+    if result.is_err() {
+        // 失败契约：文本留在剪贴板可手动粘贴（尽力而为，写不进就随它去）。
+        let _ = copy_to_clipboard_only(text);
+    }
+    result
+}
 
+/// 注入结果：`Injected` = 文本已进目标应用；`Copied` = 只写了剪贴板，需要
+/// 用户手动粘贴（`clipboard` 模式 / `auto` 兜底），调用方据此发
+/// `inject-fallback` 软提示。
+pub enum InjectOutcome {
+    Injected,
+    Copied,
+}
+
+/// 当前平台的粘贴注入（现有 `paste` 模式行为）。
+fn paste_text(text: &str) -> Result<(), String> {
     if platform::is_hyprland_session() {
         return paste_via_hyprland(text);
     }
-
     paste_via_clipboard(text)
+}
+
+/// 逐字键入（enigo unicode 输入，不碰剪贴板）：游戏 / 远程桌面 / 屏蔽粘贴
+/// 的输入框。对中文不友好（部分场景依赖 IME 状态），帮助文案已写明。
+/// `enigo.text()` 只发 unicode 字符、`\n` 不会被目标应用当成回车——按行切
+/// 开、行间真发 Return，多行转写才不丢换行。
+fn inject_text_typed(text: &str) -> Result<(), String> {
+    let mut enigo =
+        Enigo::new(&Settings::default()).map_err(|e| format!("keyboard backend failed: {e}"))?;
+    let mut first = true;
+    for line in text.split('\n') {
+        if !first {
+            enigo
+                .key(Key::Return, Direction::Click)
+                .map_err(|e| e.to_string())?;
+        }
+        first = false;
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if !line.is_empty() {
+            enigo.text(line).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// 只写剪贴板、不发粘贴按键（`clipboard` 模式与失败契约的兜底）。
+pub fn copy_to_clipboard_only(text: &str) -> Result<(), String> {
+    if platform::is_hyprland_session() {
+        return hyprland_set_clipboard(text);
+    }
+    crate::clipboard::mark_self_write(text);
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))?;
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|e| format!("clipboard write failed: {e}"))
 }
 
 fn paste_via_clipboard(text: &str) -> Result<(), String> {

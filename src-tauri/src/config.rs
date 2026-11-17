@@ -428,6 +428,58 @@ impl Default for TranslationConfig {
     }
 }
 
+/// 文本注入兼容回退（`inject.mode`，功能方案设计 2.2）。`auto` = paste 失败
+/// → type → clipboard 兜底（默认）；`paste` = 剪贴板 + Ctrl/V（现状）；
+/// `type` = enigo 逐字键入、不碰剪贴板（游戏 / 远程桌面 / 屏蔽粘贴的输入框）；
+/// `clipboard` = 只写剪贴板 + HUD 提示手动粘贴。加载走 [`de_lenient_inject_mode`]：
+/// 手改非法值退 `auto` 而不是整份配置失败；invoke 边界走 [`normalize_inject_mode`]。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct InjectConfig {
+    #[serde(default = "default_inject_mode", deserialize_with = "de_lenient_inject_mode")]
+    pub mode: String,
+}
+
+impl Default for InjectConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_inject_mode(),
+        }
+    }
+}
+
+fn default_inject_mode() -> String {
+    "auto".into()
+}
+
+fn de_lenient_inject_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(normalize_inject_mode(value.as_str().unwrap_or("")).unwrap_or_else(default_inject_mode))
+}
+
+/// `inject` 段整体宽容：段形状非法（不是对象 / 字段类型错）退默认而不拖垮
+/// 整份配置（[`de_lenient_clipboard_limit`] 同一理由：`load()` 的整体回退会
+/// 清掉 API key 等一切设置）。
+fn de_lenient_inject<'de, D>(deserializer: D) -> Result<InjectConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
+/// 注入模式：仅接受 `auto` / `paste` / `type` / `clipboard`；其余返回 `None`
+/// （调用方保留旧值，与 [`normalize_snippet_action`] 同一策略）。
+pub fn normalize_inject_mode(raw: &str) -> Option<String> {
+    match raw {
+        "auto" | "paste" | "type" | "clipboard" => Some(raw.to_string()),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -441,6 +493,8 @@ pub struct AppConfig {
     pub mouse: MouseConfig,
     #[serde(default)]
     pub picker: PickerConfig,
+    #[serde(default, deserialize_with = "de_lenient_inject")]
+    pub inject: InjectConfig,
 }
 
 impl Default for AppConfig {
@@ -453,6 +507,7 @@ impl Default for AppConfig {
             translation: TranslationConfig::default(),
             mouse: MouseConfig::default(),
             picker: PickerConfig::default(),
+            inject: InjectConfig::default(),
         }
     }
 }
@@ -1138,6 +1193,14 @@ impl ConfigStore {
             }
         }
 
+        if let Some(inject) = partial.get("inject") {
+            if let Some(v) = inject.get("mode").and_then(|v| v.as_str()) {
+                if let Some(valid) = normalize_inject_mode(v) {
+                    merged.inject.mode = valid;
+                }
+            }
+        }
+
         if let Some(picker) = partial.get("picker") {
             // Field-by-field merge (same rationale as `asr`): absent keys keep
             // their stored value so a partial patch never resets the panel.
@@ -1385,6 +1448,49 @@ mod tests {
         assert!(store
             .merge(&serde_json::json!({ "picker": { "userSnippets": [42] } }))
             .is_err());
+    }
+
+    #[test]
+    fn normalize_inject_mode_accepts_only_known_modes() {
+        assert_eq!(normalize_inject_mode("auto").as_deref(), Some("auto"));
+        assert_eq!(normalize_inject_mode("paste").as_deref(), Some("paste"));
+        assert_eq!(normalize_inject_mode("type").as_deref(), Some("type"));
+        assert_eq!(normalize_inject_mode("clipboard").as_deref(), Some("clipboard"));
+        assert_eq!(normalize_inject_mode("Auto"), None);
+        assert_eq!(normalize_inject_mode("keybd"), None);
+    }
+
+    /// `inject` 段宽容加载：段形状非法 / 非法模式都退回默认（`auto`），
+    /// 绝不拖垮整份配置（`load()` 对反序列化失败会整体回退默认，一并清空
+    /// API key 等设置）。
+    #[test]
+    fn inject_config_deserializes_leniently() {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            #[serde(default, deserialize_with = "de_lenient_inject")]
+            inject: InjectConfig,
+        }
+        let parse = |raw: &str| -> InjectConfig {
+            serde_json::from_str::<Wrapper>(raw).expect("lenient inject must deserialize").inject
+        };
+        assert_eq!(parse(r#"{"inject":{"mode":"type"}}"#).mode, "type");
+        assert_eq!(parse(r#"{"inject":{"mode":"nope"}}"#).mode, "auto");
+        assert_eq!(parse(r#"{"inject":{"mode":42}}"#).mode, "auto");
+        assert_eq!(parse(r#"{"inject":42}"#).mode, "auto");
+        assert_eq!(parse(r#"{}"#).mode, "auto");
+    }
+
+    #[test]
+    fn inject_section_merges_mode_only() {
+        let root = temp_root("inject-merge");
+        let store = ConfigStore {
+            path: root.join("voice-key-config.json"),
+        };
+        let merged = store.merge(&serde_json::json!({ "inject": { "mode": "clipboard" } })).unwrap();
+        assert_eq!(merged.inject.mode, "clipboard");
+        // 非法值保留旧值（与落点 / 侧键同一纪律）。
+        let merged = store.merge(&serde_json::json!({ "inject": { "mode": "nope" } })).unwrap();
+        assert_eq!(merged.inject.mode, "clipboard");
     }
 
     /// `clipboardLimit` 宽容加载：非法数字 / 字符串 / 超界都不能拖垮整份配置

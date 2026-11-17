@@ -1253,8 +1253,18 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
             log::warn!("stats record failed: {e}");
         }
         let _ = HistoryManager::add(final_text.clone(), duration_ms);
-        if let Err(e) = inject::inject_text(&final_text) {
-            log::warn!("text injection failed: {e}");
+        // 注入按 `inject.mode` 分派（设计 2.2）；只写剪贴板或失败时发
+        // `inject-fallback` 让 HUD 软提示，失败时文本已尽力留在剪贴板。
+        let inject_mode = state.config.load().inject.mode;
+        match inject::inject_text_with_mode(&final_text, &inject_mode) {
+            Ok(inject::InjectOutcome::Injected) => {}
+            Ok(inject::InjectOutcome::Copied) => {
+                let _ = app.emit("inject-fallback", serde_json::json!({ "reason": "copied" }));
+            }
+            Err(e) => {
+                log::warn!("text injection failed: {e}");
+                let _ = app.emit("inject-fallback", serde_json::json!({ "reason": "failed" }));
+            }
         }
     }
 
@@ -2183,10 +2193,12 @@ pub fn close_picker_panel(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 点选条目注入到当前光标（现有 `inject_text` 通道；批次二加 `injectMode`
-/// 后自动受益）。注入前把焦点还给先前应用——面板是可聚焦窗口，不还焦点的
-/// 话 Ctrl/V 会打进面板自己。成功才收起面板；失败保持打开可重试（文本已留
-/// 在剪贴板，`inject_text` 的粘贴路径写入后才发按键）。
+/// 点选条目注入到当前光标（按 `inject.mode` 分派，设计 2.2）。注入前把
+/// 焦点还给先前应用——面板是可聚焦窗口，不还焦点的话 Ctrl/V 会打进面板
+/// 自己。成功（含「只写剪贴板」的 `Copied`）收起面板；`Copied` 另发
+/// `inject-fallback` 让 HUD 提示手动粘贴。失败保持打开可重试——失败提示
+/// 由**面板自己的 toast** 承担（「文本已复制到剪贴板，可手动粘贴」），不
+/// 再回声到 HUD `inject-fallback`，两处同时弹会重复吵。
 ///
 /// 全程代际守卫（`picker.rs` 的 `PickerSession`）：插入延迟期间用户若
 /// 「点外收起 → 侧键重开」，本次还焦 / 收尾不碰新一代的面板与前台快照。
@@ -2203,11 +2215,22 @@ pub async fn picker_insert(app: AppHandle, text: String) -> Result<(), String> {
     crate::picker::restore_foreground_if(gen);
     // 等焦点稳定（还焦点是异步生效），与 translate 流水线的写后延迟同理。
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-    if let Err(e) = inject::inject_text(&text) {
-        // 失败不收起面板（可重试）；文本已留剪贴板（paste 路径先写后按键），
-        // 渲染层 toast 提示手动粘贴。日志只记原因，不记内容。
-        log::warn!("picker: inject failed: {e}");
-        return Err(e);
+    let inject_mode = app
+        .state::<AppState>()
+        .config
+        .load()
+        .inject
+        .mode;
+    match inject::inject_text_with_mode(&text, &inject_mode) {
+        Ok(inject::InjectOutcome::Injected) => {}
+        Ok(inject::InjectOutcome::Copied) => {
+            let _ = app.emit("inject-fallback", serde_json::json!({ "reason": "copied" }));
+        }
+        Err(e) => {
+            // 失败不收起面板（可重试）；日志只记原因，不记内容。
+            log::warn!("picker: inject failed: {e}");
+            return Err(e);
+        }
     }
     crate::picker::close_generation(&app, Some(gen));
     Ok(())

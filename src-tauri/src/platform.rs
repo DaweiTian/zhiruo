@@ -41,7 +41,7 @@ pub fn linux_integration_status() -> LinuxIntegrationStatus {
         session: session.into(),
         installed: false,
         message: if session == "hyprland" {
-            "Hyprland detected. Use wl-copy/wtype for paste.".into()
+            "Hyprland detected. Paste uses wl-copy + Shift+Insert.".into()
         } else {
             "No managed Hyprland integration required for this session.".into()
         },

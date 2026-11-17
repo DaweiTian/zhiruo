@@ -88,6 +88,15 @@ export interface PickerClipboardEntry {
   timestamp: number
 }
 
+/**
+ * `inject-fallback` 事件载荷（文本注入兼容回退，设计 2.2）：注入只落到
+ * 剪贴板（`copied`，clipboard 模式 / auto 兜底）或彻底失败（`failed`，
+ * 文本已尽力留在剪贴板）时由 HUD 软提示用户手动粘贴。不带正文。
+ */
+export interface InjectFallbackPayload {
+  reason: 'copied' | 'failed'
+}
+
 /** 快速插入面板数据（`picker-update` 事件 / `get_picker_data` 返回同形）。 */
 export interface PickerUpdatePayload {
   /** 打开面板的侧键落点：X1/X2 默认区域。 */
@@ -313,6 +322,9 @@ export const tauriApi = {
   deleteClipboardEntry: (text: string) => invoke('delete_clipboard_entry', { text }),
   pinClipboardEntry: (text: string) => invoke<string[]>('pin_clipboard_entry', { text }),
   removeUserSnippet: (text: string) => invoke<string[]>('remove_user_snippet', { text }),
+  // 文本注入兼容回退（设计 2.2）：注入只落剪贴板 / 失败时的 HUD 软提示。
+  onInjectFallback: (cb: (payload: InjectFallbackPayload) => void): Unsub =>
+    listenAsync('inject-fallback', cb),
 }
 
 export type ElectronAPI = typeof tauriApi

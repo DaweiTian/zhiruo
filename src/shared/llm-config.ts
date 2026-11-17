@@ -331,14 +331,22 @@ const FILLER_CLEANUP_MODES: readonly FillerCleanupMode[] = ['off', 'rules', 'llm
 const MAX_GLOSSARY_TERMS = 100
 const MAX_GLOSSARY_TERM_LENGTH = 64
 
-export function normalizeUserGlossary(raw: unknown): string[] {
+/** 常用词（`picker.userSnippets`）单条上限：0.11 从 64 放宽，剪贴板固定要装得下整句。 */
+export const MAX_SNIPPET_LENGTH = 256
+
+export function normalizeUserGlossary(
+  raw: unknown,
+  maxLength: number = MAX_GLOSSARY_TERM_LENGTH,
+): string[] {
   if (!Array.isArray(raw)) return []
   const terms: string[] = []
   const seen = new Set<string>()
   for (const item of raw) {
     if (typeof item !== 'string') continue
     const trimmed = item.trim()
-    if (trimmed.length === 0 || trimmed.length > MAX_GLOSSARY_TERM_LENGTH) continue
+    // 与 Rust `chars().count()` 同口径（码点数）：UTF-16 `.length` 会把
+    // emoji 等增补平面字符算成 2，导致 TS 比 Rust 先一步拒掉合法条目。
+    if (trimmed.length === 0 || [...trimmed].length > maxLength) continue
     if (seen.has(trimmed)) continue
     seen.add(trimmed)
     terms.push(trimmed)

@@ -8,13 +8,16 @@
 //!   的工作区（复用 [`OverlayFrame`] 的夹取）；上下两区——常用词 /
 //!   最近剪贴板；方向键 + Enter 键盘速选，Esc / 点外 / 再按侧键收起。
 //! * **落点**：X1 默认「常用词」区、X2 默认「剪贴板」区；`picker.x1Action`
-//!   / `picker.x2Action` 可改成 `snippets | clipboard | both`。
+//!   / `picker.x2Action` 可改成 `snippets | clipboard | both | hub`
+//!   （`hub` 不开本面板，`mouse.rs` 路由到选区快捷 hub）。
 //! * **注入**：点选条目走 `inject::inject_text`（现有通道；批次二加
 //!   `injectMode` 后自动受益）。插入前把前台窗口还给先前应用
 //!   （[`restore_foreground_if`]，代际守卫）——面板是可聚焦窗口（键盘导航
 //!   需要），不还焦点的话 Ctrl/V 会打进面板自己。
-//! * **常用词**：手动管理在 `picker.userSnippets`（设置页编辑）；
-//!   从历史学的候选（[`ngram_candidates`]）只进候选列表，人工确认才入库。
+//! * **常用词**：手动管理在 `picker.userSnippets`（设置页编辑；0.11 面板
+//!   条目按钮可固定 / 删除——固定 = 从剪贴板历史**移动**进来，见
+//!   `commands::pin_clipboard_entry`）；从历史学的候选（[`ngram_candidates`]）
+//!   只进候选列表，人工确认才入库。
 //!
 //! 窗口生命周期照 `hub.rs` 的按需重建 + 点外收起模式（`windowing.rs`）。
 
@@ -106,6 +109,11 @@ pub fn toggle<R: Runtime>(app: &AppHandle<R>, button: u8, cursor: (i32, i32)) {
     } else {
         &config.picker.x2_action
     };
+    // 落点 `hub` 在 `mouse.rs` 就已路由到选区 hub，到不了这里；防御性返回，
+    // 不能让 `parse` 的兜底把 hub 键误开成速插面板。
+    if action == "hub" {
+        return;
+    }
     let mut focus = PickerFocus::parse(action);
     // 剪贴板采集关着时，「剪贴板」落点退到「常用词」（面板不至于打开即空）。
     if focus == PickerFocus::Clipboard && !config.picker.clipboard_enabled {

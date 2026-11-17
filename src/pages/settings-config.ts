@@ -4,14 +4,9 @@ import {
   normalizeLLMRefineConfig,
   resolveLLMConnection,
   normalizeUserGlossary,
+  MAX_SNIPPET_LENGTH,
 } from '@/shared/llm-config'
-import type {
-  AppConfig,
-  HubSideButton,
-  LLMRefineConfig,
-  PickerConfig,
-  PickerFocusAction,
-} from '@/shared/types'
+import type { AppConfig, LLMRefineConfig, PickerConfig, PickerFocusAction } from '@/shared/types'
 
 const LLM_CONNECTION_KEYS = [
   'openai',
@@ -205,18 +200,17 @@ export function normalizeRendererConfig(loadedConfig: AppConfig): AppConfig {
   }
 }
 
-const PICKER_FOCUS_ACTIONS: readonly PickerFocusAction[] = ['snippets', 'clipboard', 'both']
-const HUB_SIDE_BUTTONS: readonly HubSideButton[] = ['none', 'x1', 'x2']
+const PICKER_FOCUS_ACTIONS: readonly PickerFocusAction[] = ['snippets', 'clipboard', 'both', 'hub']
 
 /**
- * 快速插入面板配置归一：非法落点 / 非法 Hub 侧键退回默认，条数上限夹取 5–100，
- * 常用词清洗与 `llmRefine.userGlossary` 同一纪律（trim / 去重 / 100 条 × 64 字符）。
+ * 快速插入面板配置归一：非法落点退回默认，条数上限夹取 5–100，
+ * 常用词清洗与 `llmRefine.userGlossary` 同一纪律（trim / 去重 / 100 条），
+ * 单条上限 256（`MAX_SNIPPET_LENGTH`）。0.10.x 的 `hubButton` 由 Rust 侧
+ * 迁移进落点 `hub`，这里不再归一该字段。
  */
 export function normalizePickerConfig(raw?: Partial<PickerConfig>): PickerConfig {
   const pickAction = (value: unknown, fallback: PickerFocusAction): PickerFocusAction =>
     PICKER_FOCUS_ACTIONS.find((action) => action === value) ?? fallback
-  const pickHubButton = (value: unknown, fallback: HubSideButton): HubSideButton =>
-    HUB_SIDE_BUTTONS.find((button) => button === value) ?? fallback
   const limit =
     typeof raw?.clipboardLimit === 'number' && Number.isFinite(raw.clipboardLimit)
       ? Math.min(100, Math.max(5, Math.round(raw.clipboardLimit)))
@@ -225,11 +219,10 @@ export function normalizePickerConfig(raw?: Partial<PickerConfig>): PickerConfig
     enabled: raw?.enabled ?? true,
     x1Action: pickAction(raw?.x1Action, 'snippets'),
     x2Action: pickAction(raw?.x2Action, 'clipboard'),
-    hubButton: pickHubButton(raw?.hubButton, 'none'),
     clipboardEnabled: raw?.clipboardEnabled ?? true,
     clipboardLimit: limit,
     learnSnippets: raw?.learnSnippets ?? true,
-    userSnippets: normalizeUserGlossary(raw?.userSnippets),
+    userSnippets: normalizeUserGlossary(raw?.userSnippets, MAX_SNIPPET_LENGTH),
   }
 }
 

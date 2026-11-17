@@ -483,18 +483,27 @@ describe('refine connection validation cache', () => {
 })
 
 describe('picker config normalization', () => {
-  it('keeps valid hub button picks and defaults to none', () => {
-    expect(normalizePickerConfig({ hubButton: 'x1' }).hubButton).toBe('x1')
-    expect(normalizePickerConfig({ hubButton: 'x2' }).hubButton).toBe('x2')
-    expect(normalizePickerConfig({ hubButton: 'none' }).hubButton).toBe('none')
-    expect(normalizePickerConfig({}).hubButton).toBe('none')
-    expect(normalizePickerConfig({ hubButton: 'X1' as never }).hubButton).toBe('none')
-    expect(normalizePickerConfig({ hubButton: 'hub' as never }).hubButton).toBe('none')
+  it('keeps hub as a valid side-button action and drops the legacy hubButton key', () => {
+    expect(normalizePickerConfig({ x2Action: 'hub' }).x2Action).toBe('hub')
+    expect(normalizePickerConfig({ x1Action: 'hub' }).x1Action).toBe('hub')
+    expect(normalizePickerConfig({ x1Action: 'history' as never }).x1Action).toBe('snippets')
+    // 0.10.x 的 hubButton 已由 Rust 迁移进落点，归一后不再保留。
+    const legacy = normalizePickerConfig({ hubButton: 'x2' } as never) as unknown as Record<
+      string,
+      unknown
+    >
+    expect(legacy.hubButton).toBeUndefined()
   })
 
-  it('keeps hub button distinct from the panel master switch', () => {
-    const config = normalizePickerConfig({ enabled: false, hubButton: 'x2' })
+  it('keeps the hub action distinct from the panel master switch', () => {
+    const config = normalizePickerConfig({ enabled: false, x2Action: 'hub' })
     expect(config.enabled).toBe(false)
-    expect(config.hubButton).toBe('x2')
+    expect(config.x2Action).toBe('hub')
+  })
+
+  it('raises the per-entry snippet cap to 256 characters', () => {
+    const long = 'x'.repeat(256)
+    expect(normalizePickerConfig({ userSnippets: [long] }).userSnippets).toEqual([long])
+    expect(normalizePickerConfig({ userSnippets: ['x'.repeat(257)] }).userSnippets).toEqual([])
   })
 })

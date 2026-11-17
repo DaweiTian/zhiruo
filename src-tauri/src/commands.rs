@@ -1435,7 +1435,7 @@ pub fn set_config(
     crate::mouse::set_middle_click_ptt(merged.mouse.middle_click_ptt);
     // 快速插入面板同理：侧键接管与剪贴板采集都是线程安全开关。
     crate::mouse::set_picker_side_buttons(merged.picker.enabled);
-    crate::mouse::set_hub_side_button(merged.picker.hub_button_id());
+    crate::mouse::set_hub_side_buttons(merged.picker.hub_button_mask());
     crate::clipboard::set_enabled(merged.picker.clipboard_enabled);
     crate::clipboard::set_limit(merged.picker.clipboard_limit);
     let mut hotkey_rolled_back = false;
@@ -2230,20 +2230,20 @@ pub fn confirm_snippet_candidate(
     if trimmed.is_empty() {
         return Err("常用词不能为空。".to_string());
     }
-    if trimmed.chars().count() > 64 {
-        return Err("常用词最多 64 个字符。".to_string());
+    if trimmed.chars().count() > 256 {
+        return Err("常用词最多 256 个字符。".to_string());
     }
-    let mut list = state.config.load().picker.user_snippets;
-    if !list.iter().any(|t| t == trimmed) {
-        list.push(trimmed.to_string());
-    }
-    if list.len() > 100 {
-        return Err("常用词最多 100 条。".to_string());
-    }
-    let merged = state
-        .config
-        .merge(&serde_json::json!({ "picker": { "userSnippets": list } }))?;
-    Ok(merged.picker.user_snippets)
+    let entry = trimmed.to_string();
+    state.config.update_user_snippets(move |list| {
+        if list.iter().any(|t| t == &entry) {
+            return Ok(());
+        }
+        if list.len() >= 100 {
+            return Err("常用词最多 100 条。".to_string());
+        }
+        list.push(entry);
+        Ok(())
+    })
 }
 
 /// 一键清空最近剪贴板（隐私开关的一半）。面板开着时刷新列表——清空后
@@ -2255,6 +2255,77 @@ pub fn clear_clipboard_history(app: AppHandle) -> Result<(), String> {
         let _ = app.emit("picker-update", crate::picker::current_payload(None));
     }
     Ok(())
+}
+
+/// 删除单条剪贴板历史（按文本定位：采集按文本去重，文本即唯一键）。
+/// 面板开着时刷新列表。
+#[tauri::command]
+pub fn delete_clipboard_entry(app: AppHandle, text: String) -> Result<(), String> {
+    crate::clipboard::remove_entry(&text)?;
+    if crate::picker::is_open() {
+        let _ = app.emit("picker-update", crate::picker::current_payload(None));
+    }
+    Ok(())
+}
+
+/// 固定一条剪贴板到常用词——**移动**语义：进常用词后从剪贴板历史移除
+/// （产品定稿 0.11）。校验纪律同 [`confirm_snippet_candidate`]（1–256 字符、
+/// 去重、上限 100 条）；常用词先落、剪贴板后删，第二步失败（文件 I/O）只
+/// 记日志不报错——固定的目标（进常用词）已达成，残留的剪贴板条目面板里
+/// 仍可见可删，不会凭空消失。返回更新后的常用词列表。
+#[tauri::command]
+pub fn pin_clipboard_entry(
+    app: AppHandle,
+    state: State<AppState>,
+    text: String,
+) -> Result<Vec<String>, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("常用词不能为空。".to_string());
+    }
+    if trimmed.chars().count() > 256 {
+        return Err("常用词最多 256 个字符。".to_string());
+    }
+    let entry = trimmed.to_string();
+    let list = state.config.update_user_snippets(move |list| {
+        if list.iter().any(|t| t == &entry) {
+            return Ok(());
+        }
+        if list.len() >= 100 {
+            return Err("常用词最多 100 条。".to_string());
+        }
+        list.push(entry);
+        Ok(())
+    })?;
+    // 剪贴板条目按原始文本存取（采集不 trim），删除也用原始文本匹配。
+    if let Err(e) = crate::clipboard::remove_entry(&text) {
+        log::warn!("pin_clipboard_entry: clipboard remove failed: {e}");
+    }
+    if crate::picker::is_open() {
+        let _ = app.emit("picker-update", crate::picker::current_payload(None));
+    }
+    Ok(list)
+}
+
+/// 从常用词移除一条（固定在常用词区的「取消固定 / 删除」；不回填剪贴板）。
+/// 返回更新后的常用词列表。
+#[tauri::command]
+pub fn remove_user_snippet(
+    app: AppHandle,
+    state: State<AppState>,
+    text: String,
+) -> Result<Vec<String>, String> {
+    let trimmed = text.trim().to_string();
+    let list = state
+        .config
+        .update_user_snippets(move |list| {
+            list.retain(|t| t != &trimmed);
+            Ok(())
+        })?;
+    if crate::picker::is_open() {
+        let _ = app.emit("picker-update", crate::picker::current_payload(None));
+    }
+    Ok(list)
 }
 
 #[cfg(test)]

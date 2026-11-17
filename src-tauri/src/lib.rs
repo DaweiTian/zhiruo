@@ -208,7 +208,7 @@ pub fn run() {
             // 快速插入面板：侧键 X1/X2 接管 + 最近剪贴板采集（Windows 钩子 /
             // 跨平台轮询）。
             mouse::set_picker_side_buttons(config.picker.enabled);
-            mouse::set_hub_side_button(config.picker.hub_button_id());
+            mouse::set_hub_side_buttons(config.picker.hub_button_mask());
             clipboard::init(
                 config.picker.clipboard_enabled,
                 config.picker.clipboard_limit,
@@ -283,6 +283,9 @@ pub fn run() {
             commands::get_snippet_candidates,
             commands::confirm_snippet_candidate,
             commands::clear_clipboard_history,
+            commands::delete_clipboard_entry,
+            commands::pin_clipboard_entry,
+            commands::remove_user_snippet,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Zhiruo");

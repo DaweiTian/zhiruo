@@ -309,6 +309,10 @@ export const tauriApi = {
   confirmSnippetCandidate: (text: string) =>
     invoke<string[]>('confirm_snippet_candidate', { text }),
   clearClipboardHistory: () => invoke('clear_clipboard_history'),
+  // Picker row actions (0.11)：删除剪贴板单条 / 固定（移动）进常用词 / 移除常用词。
+  deleteClipboardEntry: (text: string) => invoke('delete_clipboard_entry', { text }),
+  pinClipboardEntry: (text: string) => invoke<string[]>('pin_clipboard_entry', { text }),
+  removeUserSnippet: (text: string) => invoke<string[]>('remove_user_snippet', { text }),
 }
 
 export type ElectronAPI = typeof tauriApi

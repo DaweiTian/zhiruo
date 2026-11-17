@@ -2,9 +2,12 @@
  * 快速插入面板（`picker` 窗口）：鼠标侧键 X1/X2 唤出，点选/键盘速选注入到
  * 当前光标。
  *
- * 形态（产品定稿，见《功能方案设计.md》批次一）：
+ * 形态（产品定稿，见《功能方案设计.md》批次一；0.11 条目按钮）：
  * - 上下两区：常用词（置顶常用项，按本地使用计数排序）/ 最近剪贴板（最新在前）；
- * - 方向键 + Enter 键盘速选，Esc 收起（点外 / 再按侧键收起走 `mouse.rs` 钩子）；
+ * - 条目尾部动作按钮：剪贴板条目「固定」（**移动**进常用词）+「删除」，
+ *   常用词条目「删除」（= 取消固定，不回填剪贴板）；
+ * - 方向键 + Enter 键盘速选，Delete 删除选中项，Esc 收起（点外 / 再按侧键
+ *   收起走 `mouse.rs` 钩子）；
  * - 落点：X1 默认「常用词」区、X2 默认「剪贴板」区（`focus` 来自 Rust），
  *   决定初始选中项；`both` 从头开始；
  * - 点选条目 → `picker_insert`（Rust 先还焦点给先前应用再走 `inject_text`），
@@ -18,7 +21,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
+import { Pin, PinOff, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { MAX_SNIPPET_LENGTH } from '@/shared/llm-config'
 import type { PickerClipboardEntry, PickerUpdatePayload } from '@/lib/tauri-api'
 
 const USAGE_STORAGE_KEY = 'voicekey.picker.usage'
@@ -171,7 +176,43 @@ export function Picker() {
     void window.electronAPI.closePickerPanel().catch(() => {})
   }, [])
 
-  // 键盘速选：↑/↓ 移动，Enter 注入，Esc 收起，Home/End 跳首尾。
+  // 剪贴板条目「固定」：移动进常用词（Rust 侧移出剪贴板历史）。
+  // 长度 / 容量在前端预检给本地化提示；Rust 再兜一层 invoke 边界校验。
+  const pin = useCallback(
+    (item: FlatItem | undefined) => {
+      if (!item) return
+      const trimmed = item.text.trim()
+      // 与 Rust `chars().count()` 同口径（码点数），emoji 不被误拒。
+      if ([...trimmed].length > MAX_SNIPPET_LENGTH) {
+        toast.error(t('picker.pinTooLong'))
+        return
+      }
+      if (!snippets.includes(trimmed) && snippets.length >= 100) {
+        toast.error(t('picker.pinFull'))
+        return
+      }
+      void window.electronAPI
+        .pinClipboardEntry(item.text)
+        .then(() => toast.success(t('picker.pinned')))
+        .catch(() => toast.error(t('picker.actionFailed')))
+    },
+    [snippets, t],
+  )
+
+  // 条目删除：剪贴板条目删历史，常用词条目即取消固定（不回填剪贴板）。
+  const remove = useCallback(
+    (item: FlatItem | undefined) => {
+      if (!item) return
+      const call =
+        item.kind === 'clipboard'
+          ? window.electronAPI.deleteClipboardEntry(item.text)
+          : window.electronAPI.removeUserSnippet(item.text)
+      void call.catch(() => toast.error(t('picker.actionFailed')))
+    },
+    [t],
+  )
+
+  // 键盘速选：↑/↓ 移动，Enter 注入，Delete 删除选中项，Esc 收起，Home/End 跳首尾。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -195,11 +236,14 @@ export function Picker() {
       } else if (event.key === 'Enter') {
         event.preventDefault()
         insert(flatItems[Math.min(selectedIndex, flatItems.length - 1)])
+      } else if (event.key === 'Delete') {
+        event.preventDefault()
+        remove(flatItems[Math.min(selectedIndex, flatItems.length - 1)])
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [flatItems, selectedIndex, insert, close])
+  }, [flatItems, selectedIndex, insert, remove, close])
 
   // 选中项滚进可视区（两区共用一个滚动容器）。
   useEffect(() => {
@@ -232,6 +276,7 @@ export function Picker() {
             selectedIndex={selectedIndex}
             onSelect={setTouchedIndex}
             onInsert={insert}
+            onDelete={remove}
           />
           <Section
             title={t('picker.clipboard')}
@@ -242,6 +287,8 @@ export function Picker() {
             offset={sortedSnippets.length}
             onSelect={setTouchedIndex}
             onInsert={insert}
+            onDelete={remove}
+            onPin={pin}
             showTime
           />
         </div>
@@ -262,6 +309,8 @@ function Section({
   offset = 0,
   onSelect,
   onInsert,
+  onDelete,
+  onPin,
   showTime = false,
 }: {
   title: string
@@ -272,8 +321,11 @@ function Section({
   offset?: number
   onSelect: (index: number) => void
   onInsert: (item: FlatItem) => void
+  onDelete: (item: FlatItem) => void
+  onPin?: (item: FlatItem) => void
   showTime?: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <div className="px-2 pb-1">
       <div className="flex items-baseline justify-between px-1.5 pb-1 pt-1">
@@ -292,28 +344,61 @@ function Section({
             const absolute = offset + index
             const selected = absolute === selectedIndex
             return (
-              <button
+              <div
                 key={item.key}
-                type="button"
                 data-selected={selected}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+                  'flex w-full items-center gap-1 rounded-md pr-1 text-xs transition-colors',
                   selected
                     ? 'bg-primary/20 text-foreground ring-1 ring-primary/40'
                     : 'text-foreground/80 hover:bg-accent hover:text-foreground',
                 )}
                 onMouseEnter={() => onSelect(absolute)}
-                onClick={() => onInsert(item)}
               >
-                <span className="min-w-0 flex-1 truncate whitespace-pre-wrap break-words">
-                  {item.text}
-                </span>
-                {showTime && item.timeLabel && (
-                  <span className="shrink-0 text-[9px] text-muted-foreground">
-                    {item.timeLabel}
+                {/* 主体点击 = 插入；尾部动作按钮独立，不冒泡到插入。 */}
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left"
+                  onClick={() => onInsert(item)}
+                >
+                  <span className="min-w-0 flex-1 truncate whitespace-pre-wrap break-words">
+                    {item.text}
                   </span>
+                  {showTime && item.timeLabel && (
+                    <span className="shrink-0 text-[9px] text-muted-foreground">
+                      {item.timeLabel}
+                    </span>
+                  )}
+                </button>
+                {onPin && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    aria-label={t('picker.pin')}
+                    title={t('picker.pin')}
+                    className="shrink-0 rounded-md p-1 text-muted-foreground/70 transition-colors hover:bg-primary/15 hover:text-primary"
+                    onClick={() => onPin(item)}
+                  >
+                    <Pin className="h-3.5 w-3.5" />
+                  </button>
                 )}
-              </button>
+                {/* 剪贴板条目 = 删除（Trash）；常用词条目 = 取消固定（PinOff）。 */}
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  aria-label={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
+                  title={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
+                  className="shrink-0 rounded-md p-1 text-muted-foreground/70 transition-colors hover:bg-destructive/15 hover:text-destructive"
+                  onClick={() => onDelete(item)}
+                >
+                  {item.kind === 'clipboard' ? (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <PinOff className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
             )
           })}
         </div>

@@ -99,21 +99,21 @@ pub struct MouseConfig {
 ///
 /// 侧键接管是 Windows-only（`mouse.rs` 的 `WH_MOUSE_LL` 钩子），配置存全
 /// 平台以免换机丢偏好。动作字面量见 [`normalize_snippet_action`]；
-/// `user_snippets` 是手动管理的常用词（上限 100 条 × 64 字符）。
+/// `user_snippets` 是手动管理的常用词（上限 100 条 × 256 字符）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PickerConfig {
     /// 启用侧键快速插入（关掉即完全放行 X1/X2，前进/后退恢复）。
     pub enabled: bool,
-    /// X1 单击落点：`snippets` | `clipboard` | `both`。
+    /// X1 单击落点：`snippets` | `clipboard` | `both` | `hub`。
     pub x1_action: String,
-    /// X2 单击落点：`snippets` | `clipboard` | `both`。
+    /// X2 单击落点：`snippets` | `clipboard` | `both` | `hub`。
     pub x2_action: String,
-    /// 快捷 Hub 指定侧键（`none` | `x1` | `x2`）：指定后该键唤出选区快捷 hub
-    /// （以鼠标为环心），另一键保持速插面板；`enabled` 只管速插面板，关掉
-    /// 不影响 hub 侧键（悬浮胶囊关了也一样）。加载走 [`de_lenient_hub_button`]：
-    /// 手改出非法值退回 `none` 而不是让整份配置反序列化失败
-    /// （[`de_lenient_clipboard_limit`] 同一理由）。
+    /// 0.10.x 遗留的「快捷 Hub 侧键」（`none` | `x1` | `x2`）：0.11 起 `hub`
+    /// 并入 x1/x2 落点字面量，本字段只作为旧配置的迁移输入
+    /// （[`PickerConfig::migrate_legacy_hub_button`]，行为等价：旧路由 hub
+    /// 压过落点）。加载走 [`de_lenient_hub_button`]：手改出非法值退回 `none`
+    /// 而不是让整份配置反序列化失败（[`de_lenient_clipboard_limit`] 同一理由）。
     #[serde(
         default = "default_hub_button",
         deserialize_with = "de_lenient_hub_button"
@@ -163,13 +163,30 @@ fn default_hub_button() -> String {
 }
 
 impl PickerConfig {
-    /// `hub_button` 字面量 → 钩子用侧键编号（1 = X1，2 = X2，0 = 未指定）。
-    pub fn hub_button_id(&self) -> u8 {
-        match self.hub_button.as_str() {
-            "x1" => 1,
-            "x2" => 2,
-            _ => 0,
+    /// 落点字面量里 `hub` 的钩子侧键掩码：bit0 = X1，bit1 = X2（0 = 无）。
+    /// `snippets` / `clipboard` / `both` 走速插面板，不置位。
+    pub fn hub_button_mask(&self) -> u8 {
+        let mut mask = 0;
+        if self.x1_action == "hub" {
+            mask |= 1;
         }
+        if self.x2_action == "hub" {
+            mask |= 2;
+        }
+        mask
+    }
+
+    /// 0.10.x `hubButton`（`none` | `x1` | `x2`）→ 0.11 落点 `hub` 的迁移。
+    /// 旧路由 hub 压过落点，所以直接覆写对应键的落点即行为等价；迁完把
+    /// `hub_button` 置回 `none`，幂等。[`ConfigStore::load_unlocked`] 每次
+    /// 加载都跑；迁移结果随下一次 `merge` 保存落盘。
+    pub fn migrate_legacy_hub_button(&mut self) {
+        match self.hub_button.as_str() {
+            "x1" => self.x1_action = "hub".into(),
+            "x2" => self.x2_action = "hub".into(),
+            _ => {}
+        }
+        self.hub_button = default_hub_button();
     }
 }
 
@@ -203,7 +220,7 @@ where
 }
 
 /// `userSnippets` 的宽容加载：形状非法整体退回空表；非法条目（非字符串 /
-/// 超 64 字符）**逐条丢弃**、重复与空串清洗、超 100 条截断。与
+/// 超 256 字符）**逐条丢弃**、重复与空串清洗、超 100 条截断。与
 /// [`de_lenient_clipboard_limit`] 同一理由：手改配置不能拖垮整份配置。
 /// invoke 边界仍然走严格版 [`normalize_user_snippets`]（坏输入直接报错）。
 fn de_lenient_user_snippets<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -220,7 +237,7 @@ where
             continue;
         };
         let trimmed = s.trim();
-        if trimmed.is_empty() || trimmed.chars().count() > 64 {
+        if trimmed.is_empty() || trimmed.chars().count() > 256 {
             continue;
         }
         if !terms.iter().any(|t| t == trimmed) {
@@ -770,11 +787,11 @@ pub fn normalize_filler_cleanup(raw: &str) -> Option<String> {
     }
 }
 
-/// 侧键落点动作：仅接受 `snippets` / `clipboard` / `both`；其余返回 `None`
-/// （调用方保留旧值，与 [`normalize_filler_cleanup`] 同一策略）。
+/// 侧键落点动作：仅接受 `snippets` / `clipboard` / `both` / `hub`；其余返回
+/// `None`（调用方保留旧值，与 [`normalize_filler_cleanup`] 同一策略）。
 pub fn normalize_snippet_action(raw: &str) -> Option<String> {
     match raw {
-        "snippets" | "clipboard" | "both" => Some(raw.to_string()),
+        "snippets" | "clipboard" | "both" | "hub" => Some(raw.to_string()),
         _ => None,
     }
 }
@@ -794,8 +811,8 @@ pub fn normalize_clipboard_limit(raw: &serde_json::Value) -> Option<u32> {
 }
 
 /// invoke 边界校验常用词（`picker.userSnippets`）：形状非法/超限报错，
-/// 空串与重复静默清洗。上限 100 条 × 64 字符（与
-/// [`normalize_user_glossary`] 同一纪律）。
+/// 空串与重复静默清洗。上限 100 条 × 256 字符（0.11 从 64 放宽，剪贴板
+/// 固定进常用词要装得下整句；与 [`normalize_user_glossary`] 同一纪律）。
 pub fn normalize_user_snippets(raw: Option<&serde_json::Value>) -> Result<Vec<String>, String> {
     let Some(value) = raw else {
         return Ok(Vec::new());
@@ -812,8 +829,8 @@ pub fn normalize_user_snippets(raw: Option<&serde_json::Value>) -> Result<Vec<St
         if trimmed.is_empty() {
             continue;
         }
-        if trimmed.chars().count() > 64 {
-            return Err("picker.userSnippets entries must be at most 64 characters".into());
+        if trimmed.chars().count() > 256 {
+            return Err("picker.userSnippets entries must be at most 256 characters".into());
         }
         if !terms.iter().any(|t| t == trimmed) {
             terms.push(trimmed.to_string());
@@ -847,10 +864,14 @@ impl ConfigStore {
 
     /// [`Self::load`] without locking. Only call while holding [`CONFIG_LOCK`].
     fn load_unlocked(&self) -> AppConfig {
-        match fs::read_to_string(&self.path) {
+        let mut config = match fs::read_to_string(&self.path) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
             Err(_) => AppConfig::default(),
-        }
+        };
+        // 0.10.x `hubButton` → 0.11 落点 `hub`：每次加载幂等迁移（见
+        // [`PickerConfig::migrate_legacy_hub_button`]），落盘随下一次 merge。
+        config.picker.migrate_legacy_hub_button();
+        config
     }
 
     /// The config-file write primitive. Not thread-safe on its own: callers
@@ -1134,9 +1155,13 @@ impl ConfigStore {
                         merged.picker.x2_action = valid;
                     }
                 }
+                // 0.10.x 遗留键：翻译成对应落点 `hub`（旧语义 hub 压过落点），
+                // 与 [`PickerConfig::migrate_legacy_hub_button`] 同一迁移。
                 if let Some(v) = obj.get("hubButton").and_then(|v| v.as_str()) {
-                    if let Some(valid) = normalize_hub_button(v) {
-                        merged.picker.hub_button = valid;
+                    match normalize_hub_button(v).as_deref() {
+                        Some("x1") => merged.picker.x1_action = "hub".into(),
+                        Some("x2") => merged.picker.x2_action = "hub".into(),
+                        _ => {}
                     }
                 }
                 if let Some(v) = obj.get("clipboardEnabled").and_then(|v| v.as_bool()) {
@@ -1160,6 +1185,23 @@ impl ConfigStore {
 
         self.save_unlocked(&merged)?;
         Ok(merged)
+    }
+
+    /// 常用词（`picker.userSnippets`）的持锁读-改-写：`update` 拿到当前列表
+    /// 就地改（返回 `Err` 中止落盘），成功后整体保存并返回新列表。命令侧
+    /// 并发（面板固定 / 删除连点）走这里而不是「load → merge 整表替换」——
+    /// 后者两个写者互相覆盖会丢条目。设置页 Textarea 的整表合并仍是另一
+    /// 写者（已接受的草稿语义），不在本方法职责内。
+    pub fn update_user_snippets<F>(&self, update: F) -> Result<Vec<String>, String>
+    where
+        F: FnOnce(&mut Vec<String>) -> Result<(), String>,
+    {
+        let _guard = CONFIG_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut stored = self.load_unlocked();
+        update(&mut stored.picker.user_snippets)?;
+        let list = stored.picker.user_snippets.clone();
+        self.save_unlocked(&stored)?;
+        Ok(list)
     }
 }
 
@@ -1200,6 +1242,7 @@ mod tests {
         assert_eq!(normalize_snippet_action("snippets").as_deref(), Some("snippets"));
         assert_eq!(normalize_snippet_action("clipboard").as_deref(), Some("clipboard"));
         assert_eq!(normalize_snippet_action("both").as_deref(), Some("both"));
+        assert_eq!(normalize_snippet_action("hub").as_deref(), Some("hub"));
         assert_eq!(normalize_snippet_action("history"), None);
     }
 
@@ -1213,23 +1256,59 @@ mod tests {
     }
 
     #[test]
-    fn hub_button_id_maps_literal_to_hook_button() {
+    fn hub_button_mask_reads_action_literals() {
         let config = PickerConfig {
-            hub_button: "x1".into(),
+            x1_action: "hub".into(),
             ..Default::default()
         };
-        assert_eq!(config.hub_button_id(), 1);
+        assert_eq!(config.hub_button_mask(), 1);
         let config = PickerConfig {
+            x2_action: "hub".into(),
+            ..Default::default()
+        };
+        assert_eq!(config.hub_button_mask(), 2);
+        let config = PickerConfig {
+            x1_action: "hub".into(),
+            x2_action: "hub".into(),
+            ..Default::default()
+        };
+        assert_eq!(config.hub_button_mask(), 3);
+        assert_eq!(PickerConfig::default().hub_button_mask(), 0);
+    }
+
+    /// 0.10.x `hubButton` 迁移：旧语义 hub 压过落点，覆写对应键落点即行为
+    /// 等价；迁完 `hub_button` 归 `none`，重复迁移幂等。
+    #[test]
+    fn migrate_legacy_hub_button_rewrites_action_and_resets_field() {
+        let mut config = PickerConfig {
+            x1_action: "snippets".into(),
+            x2_action: "clipboard".into(),
             hub_button: "x2".into(),
             ..Default::default()
         };
-        assert_eq!(config.hub_button_id(), 2);
-        assert_eq!(PickerConfig::default().hub_button_id(), 0);
-        let config = PickerConfig {
+        config.migrate_legacy_hub_button();
+        assert_eq!(config.x2_action, "hub");
+        assert_eq!(config.x1_action, "snippets");
+        assert_eq!(config.hub_button, "none");
+        config.migrate_legacy_hub_button();
+        assert_eq!(config.x2_action, "hub");
+
+        let mut config = PickerConfig {
+            hub_button: "x1".into(),
+            ..Default::default()
+        };
+        config.migrate_legacy_hub_button();
+        assert_eq!(config.x1_action, "hub");
+        assert_eq!(config.x2_action, "clipboard");
+
+        // none / 非法值不碰落点。
+        let mut config = PickerConfig {
+            x2_action: "both".into(),
             hub_button: "nope".into(),
             ..Default::default()
         };
-        assert_eq!(config.hub_button_id(), 0);
+        config.migrate_legacy_hub_button();
+        assert_eq!(config.x2_action, "both");
     }
 
     #[test]
@@ -1253,7 +1332,11 @@ mod tests {
         );
         assert_eq!(normalize_user_snippets(None).unwrap(), Vec::<String>::new());
         assert!(normalize_user_snippets(Some(&serde_json::json!([42]))).is_err());
-        assert!(normalize_user_snippets(Some(&serde_json::json!(["x".repeat(65)]))).is_err());
+        assert!(normalize_user_snippets(Some(&serde_json::json!(["x".repeat(257)]))).is_err());
+        assert_eq!(
+            normalize_user_snippets(Some(&serde_json::json!(["x".repeat(256)]))).unwrap(),
+            vec!["x".repeat(256)]
+        );
         let many: Vec<String> = (0..120).map(|i| format!("s{i}")).collect();
         assert!(normalize_user_snippets(Some(&serde_json::json!(many))).is_err());
     }
@@ -1285,7 +1368,9 @@ mod tests {
             .unwrap();
         assert!(!merged.picker.enabled);
         assert_eq!(merged.picker.x1_action, "both");
-        assert_eq!(merged.picker.hub_button, "x2");
+        // 遗留 hubButton 译成落点 hub（旧语义 hub 压过落点），hub_button 归位。
+        assert_eq!(merged.picker.x2_action, "hub");
+        assert_eq!(merged.picker.hub_button, "none");
         assert_eq!(merged.picker.clipboard_limit, 5); // clamped
         assert_eq!(merged.picker.user_snippets, vec!["好嘞".to_string()]);
 
@@ -1294,7 +1379,7 @@ mod tests {
             .merge(&serde_json::json!({ "picker": { "x1Action": "nope", "hubButton": "X9" } }))
             .unwrap();
         assert_eq!(merged.picker.x1_action, "both");
-        assert_eq!(merged.picker.hub_button, "x2");
+        assert_eq!(merged.picker.x2_action, "hub");
         assert!(!merged.picker.enabled);
 
         assert!(store
@@ -1344,6 +1429,12 @@ mod tests {
         // 形状非法（非数组）→ 空表，而不是整份配置解析失败。
         assert_eq!(parse(r#"{"userSnippets":42}"#).user_snippets, Vec::<String>::new());
         assert_eq!(parse(r#"{"userSnippets":"好嘞"}"#).user_snippets, Vec::<String>::new());
+        // 超 256 字符的条目逐条丢弃（不拖垮整份）。
+        let over: String = "x".repeat(257);
+        assert_eq!(
+            parse(&format!(r#"{{"userSnippets":["{over}","好嘞"]}}"#)).user_snippets,
+            vec!["好嘞".to_string()]
+        );
         // 超 100 条截断到 100。
         let many = (0..120).map(|i| format!("\"s{i}\"")).collect::<Vec<_>>().join(",");
         assert_eq!(parse(&format!(r#"{{"userSnippets":[{many}]}}"#)).user_snippets.len(), 100);

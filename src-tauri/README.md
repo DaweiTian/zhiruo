@@ -366,7 +366,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   `refresh_capsule_hover`（光标静止 + 胶囊移位的悬停重算）。**侧键 X1/X2（批次一）**：
   被认领的侧键 `WM_XBUTTONDOWN/UP` 被**吞掉**（钩子返回 1，唯一例外于
   "观察不拦截"——浏览器前进/后退随之失效，产品确认接受），down 走 enqueue 按
-  认领路由（`picker.enabled` → 速插面板 toggle；`picker.hubButton` 指定的键 →
+  认领路由（`picker.enabled` → 速插面板 toggle；落点 `hub` 的键（x1/x2 action
+  `hub`，位掩码 `PickerConfig::hub_button_mask`）→
   选区 hub 以鼠标为环心，面板开关不影响它），两面板互斥、后开先关；无人认领
   的侧键完全放行（前进/后退保留）。非 Windows 为 no-op stub
   （无钩子即保持旧行为、不回归）。
@@ -424,8 +425,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   "进行中"），全流程 spawn 到 async runtime 执行，不阻塞快捷键回调；反馈后 1.2s
   回 idle 复用 `commands::overlay_idle_later`；Hyprland 会话剪贴板
   走 `wl-paste`/`wl-copy`（`inject.rs`），其余平台走 `arboard`。
-- `src/hub.rs` - 选区快捷动作 hub 编排（右键常驻胶囊 / `picker.hubButton` 指定
-  侧键唤出的圆环动作面板）：
+- `src/hub.rs` - 选区快捷动作 hub 编排（右键常驻胶囊 / 侧键落点「快捷 Hub」
+  （`picker.x1Action`/`x2Action` 取 `hub`）唤出的圆环动作面板）：
   打开即哨兵捕获选区（`translate::capture_selection_text`，文本暂存供动作点击
   使用）、`hub-update` 事件状态流（capturing → ready / empty → processing →
   done / result / error；**每条载荷统一带 `dockEdge` 与 `ringCenter`**，动作中段
@@ -450,26 +451,30 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   `AddClipboardFormatListener`（`WM_CLIPBOARDUPDATE`，专用线程 + message-only
   窗口）、非 Windows 降级轮询 + 内容比对；**自写抑制**（`mark_self_write`，内容
   哈希基线）让 `translate.rs` / `inject.rs` 的写剪贴板不进历史（自产自销）。隐私：
-  「启用剪贴板采集」总开关 + 设置页一键清空；不进日志、不上传。
+  「启用剪贴板采集」总开关 + 设置页一键清空、面板单条删除（`remove_entry`，
+  文本即唯一键，采集按文本去重）；不进日志、不上传。
 - `src/picker.rs` - 快速插入面板编排（鼠标侧键 X1/X2 唤出，label `picker`）：
   开关语义 toggle、贴指针弹出（`OverlayFrame` 工作区夹取，约 320×380）、`picker-update`
   事件下发常用词 + 最近剪贴板（挂载拉 `get_picker_data` 兜底首开竞态）；落点
-  `snippets | clipboard | both`（X1/X2 各自配置）。**键盘导航需要输入焦点**
+  `snippets | clipboard | both | hub`（X1/X2 各自配置；`hub` 不开本面板，
+  `mouse.rs` 路由到选区 hub）。**键盘导航需要输入焦点**
   （与 hub 的 non-focusable 相反）——插入前 `restore_foreground_if` 把焦点还给
   先前应用（Alt 敲击解锁 + `SetForegroundWindow`），否则 Ctrl/V 会打进面板自己；
   开/关 + 前台快照 + 落点由一把小锁（`PickerSession`）+ **代际守卫**罩住，
   插入延迟期间的「点外收起→侧键重开」不会被陈旧收尾误伤。启动时独立线程
   **预创建**面板窗口（隐藏），首次侧键按下不会被 WebView 创建堵住串行
   mouse worker（中键弹跳窗 / Disable 时序不容失真）。常用词双来源：
-  `picker.userSnippets`（手动，100 条 × 64 字符）+ 历史 n-gram 候选
+  `picker.userSnippets`（手动，100 条 × 256 字符；面板条目按钮可固定 / 删除，
+  固定 = 从剪贴板历史**移动**进常用词）+ 历史 n-gram 候选
   （`ngram_candidates` 纯函数：2–6 字片段出现 ≥3 次、极大片段、含 CJK，
   人工确认才入库）。窗口生命周期归 `windowing::ensure_picker_window`（隐藏 / 重建，
   绝不销毁）。
 - `src/config.rs` - 配置存储（`voice-key-config.json`）。ASR 段含
   `micKeepAlive`（麦克风保温，默认开）等录音行为开关；`picker` 段含快速插入面板
-  （侧键 X1/X2 落点、`hubButton` 快捷 hub 指定侧键 `none | x1 | x2`、剪贴板采集、
+  （侧键 X1/X2 落点 `snippets | clipboard | both | hub`、剪贴板采集、
   常用词 `userSnippets`，normalizer 与 userGlossary
-  同一纪律；手改易错字段走宽容加载 `de_lenient_*`，非法值退默认不整份冲掉）。**配置写入线程安全**：
+  同一纪律、单条 256 字符；0.10.x 的 `hubButton` 遗留键加载时迁移成落点 `hub`，
+  旧语义 hub 压过落点故行为等价）；手改易错字段走宽容加载 `de_lenient_*`，非法值退默认不整份冲掉）。**配置写入线程安全**：
   所有写入口（`merge`：`set_config` 及其快捷键回滚、`test_refine_connection`、
   `set_app_language`、overlay 显隐 flag / 拖拽位置持久化）的
   load → mutate → save 全程持进程级 `CONFIG_LOCK`（与 `stats.rs` 的 `STATS_LOCK`

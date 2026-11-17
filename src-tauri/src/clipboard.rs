@@ -202,6 +202,19 @@ pub(crate) fn clear() -> Result<(), String> {
     save_unlocked(&ClipboardStore::default())
 }
 
+/// 删除单条历史。采集按文本去重（[`observe`] 先 retain 再头插），文本即
+/// 唯一键；不存在的目标是幂等空操作。面板的「删除 / 固定出列」用它。
+pub(crate) fn remove_entry(text: &str) -> Result<(), String> {
+    let _guard = CLIPBOARD_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut store = load_unlocked();
+    let before = store.items.len();
+    store.items.retain(|item| item.text != text);
+    if store.items.len() == before {
+        return Ok(());
+    }
+    save_unlocked(&store)
+}
+
 /// 读一次剪贴板并交给 [`observe`]（轮询与事件两条路的共用尾巴）。
 /// 读失败（剪贴板正被别人占用）补采一次：瞬时占用期间的用户复制不能
 /// 就此永久丢失（`WM_CLIPBOARDUPDATE` 不会为同一次复制再发一次）。

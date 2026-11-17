@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.11.0](https://github.com/DaweiTian/zhiruo/compare/v0.10.0...v0.11.0) (2026-11-17)
+
+### Features
+
+- **picker:** 面板条目动作按钮——剪贴板条目「固定」（**移动**进常用词）与「删除」，常用词条目「取消固定」（不回填剪贴板），Delete 键删除选中项；固定 / 删除即时刷新面板（`picker-update`），长度 / 容量前端预检给本地化提示、Rust invoke 边界再兜一层
+- **picker:** 常用词单条上限 64 → **256** 字符（100 条不变）——剪贴板固定要装得下整句；设置页校验、宽容加载、归一化两侧同步放宽
+- **settings:** 快捷 Hub 并入 X1/X2 落点（常用词 / 最近剪贴板 / 全部显示 / **快捷 Hub** 四选一），退役独立「快捷 Hub 侧键」——消除「X2 显示剪贴板实弹 hub」的 UI 矛盾；hub 落点仍不受速插总开关影响（胶囊关闭也照用）；0.10.x `hubButton` 配置按行为等价迁移成落点 `hub`（旧路由 hub 压过落点），`mouse.rs` 侧键路由改位掩码（bit0=X1，bit1=X2）
+
+### Bug Fixes
+
+- **config:** 常用词命令侧读-改-写改持锁原子操作 `update_user_snippets`——面板「固定 / 删除」连点并发不再互相覆盖丢条目（后写整表替换前写、剪贴板原文已被删 → 两边都丢的高危路径）；固定先落常用词后删剪贴板，第二步失败只记日志不报错（目标已达成，残留条目仍可见可删）
+
+### Notes
+
+- 固定为**移动**语义（用户拍板）：进常用词即从剪贴板历史移除；「取消固定」只删常用词侧，不回填剪贴板
+- TS / Rust 长度校验统一码点口径（对齐 `chars().count()`），emoji 等增补平面字符不再被 TS 先一步拒掉
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.10.0](https://github.com/DaweiTian/zhiruo/compare/v0.9.0...v0.10.0) (2026-11-17)
 
 ### Features

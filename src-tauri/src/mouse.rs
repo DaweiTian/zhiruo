@@ -28,10 +28,12 @@
 //!    ([`crate::hub::close_hub`]) — the standard popup-menu dismissal. The
 //!    hub's own background click already closes it in the renderer; the hook
 //!    only covers clicks that leave the hub window entirely.
-//! 4. **Side-button quick picker.** `WM_XBUTTONDOWN` / `WM_XBUTTONUP`
-//!    (X1/X2) toggle the quick-insert panel ([`crate::picker`]). Unlike the
-//!    other three consumers this branch **swallows** the event (see below),
-//!    gated by the `picker.enabled` setting ([`PICKER_SIDE_BUTTONS`]).
+//! 4. **Side-button panels.** `WM_XBUTTONDOWN` / `WM_XBUTTONUP`
+//!    (X1/X2) toggle the button's assigned panel ([`crate::picker`] or the
+//!    selection hub at the pointer, `picker.hubButton`). Unlike the
+//!    other three consumers this branch **swallows** the event (see below) —
+//!    per button: a handled button (picker on, or hub-assigned) is swallowed,
+//!    an unclaimed one passes through.
 //!
 //! The hook itself is installed **whenever the process runs** (decoupled from
 //! [`ENABLED`]); the middle-button branch simply does nothing while the
@@ -40,13 +42,14 @@
 //! Design notes:
 //!
 //! * **Observing only — except the side buttons.** Middle-button events (and
-//!   every other message except X1/X2 while the picker setting is on) are
+//!   every other message except handled X1/X2) are
 //!   passed on through `CallNextHookEx`, so middle-click paste in terminals
 //!   and other middle-button behaviors keep working (they may fire *together*
 //!   with the recording trigger — the settings copy warns about this). The
-//!   **only** branch that swallows input is the picker's X1/X2 branch
-//!   (`picker.enabled`): the hook returns 1 for those events so browsers lose
-//!   forward/back, exactly as the settings copy promises. Swallowing only
+//!   **only** branch that swallows input is the side-button branch
+//!   (`picker.enabled` / `picker.hubButton`): the hook returns 1 for those
+//!   events so browsers lose forward/back, exactly as the settings copy
+//!   promises. Swallowing only
 //!   applies to `WM_XBUTTONDOWN`/`WM_XBUTTONUP` — never to the wheel, never
 //!   to left/right/middle.
 //! * **Wheel is inert.** The callback acts on `WM_MBUTTONDOWN` /
@@ -371,6 +374,10 @@ pub fn set_middle_click_ptt(_enabled: bool) {}
 #[cfg(not(windows))]
 pub fn set_picker_side_buttons(_enabled: bool) {}
 
+/// 非 Windows：无 `WH_MOUSE_LL` 钩子，hub 侧键不存在（设置项在 UI 层隐藏）。
+#[cfg(not(windows))]
+pub fn set_hub_side_button(_button: u8) {}
+
 #[cfg(not(windows))]
 pub fn clear_owned_session() {}
 
@@ -395,12 +402,13 @@ pub fn sync_ignore_state(_kind: CapsuleKind, _ignore: bool) {}
 #[cfg(windows)]
 pub use win::{
     clear_owned_session, init, refresh_capsule_hover, register_capsule_window, set_capsule_grab,
-    set_capsule_hit_rect, set_middle_click_ptt, set_picker_side_buttons, sync_ignore_state,
+    set_capsule_hit_rect, set_hub_side_button, set_middle_click_ptt, set_picker_side_buttons,
+    sync_ignore_state,
 };
 
 #[cfg(windows)]
 mod win {
-    use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicU8, Ordering};
     use std::sync::{Mutex, OnceLock, PoisonError};
     use std::time::Duration;
 
@@ -430,6 +438,17 @@ mod win {
     /// 目标应用的前进/后退随之失效（产品确认接受）。只门禁 X 分支——
     /// 钩子本身依旧常驻（hover / hub 收起需要它）。
     static PICKER_SIDE_BUTTONS: AtomicBool = AtomicBool::new(false);
+
+    /// 快捷 Hub 指定侧键；镜像持久化的 `picker.hubButton`（0 = 未指定，
+    /// 1 = X1，2 = X2，[`crate::config::PickerConfig::hub_button_id`]）。
+    /// 指定侧键的 down/up 被吞掉并唤出 hub（以鼠标为环心）；未指定的侧键
+    /// 仍归 [`PICKER_SIDE_BUTTONS`] 管。两路都关时 X1/X2 完全放行。
+    static HUB_SIDE_BUTTON: AtomicU8 = AtomicU8::new(0);
+
+    /// 侧键按压锁存（bit0 = X1，bit1 = X2）：DOWN 被吞时置位，配对 UP 据
+    /// 此吞掉并清位。设置热更新（自动保存）落在按住侧键期间也不能拆散
+    /// DOWN/UP 配对——只吞一半会让目标应用收到孤立按键。
+    static SIDE_SWALLOW: AtomicU8 = AtomicU8::new(0);
 
     /// Spawn guard: the pump thread runs for the whole process lifetime.
     static THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -489,8 +508,10 @@ mod win {
         /// ([`is_dismiss_press`]): close the hub unless it landed on our own
         /// capsule windows. `root_hwnd` is captured in the hook like [`Down`].
         OutsidePress { root_hwnd: isize },
-        /// `WM_XBUTTONDOWN` while the picker setting is on: toggle the
-        /// quick-insert panel. `button` is 1 (X1) or 2 (X2) from the high word
+        /// `WM_XBUTTONDOWN` on a handled side button (`picker.enabled` or
+        /// `picker.hubButton`): toggle the button's assigned panel (hub side
+        /// button → selection hub at the pointer, else quick-insert panel).
+        /// `button` is 1 (X1) or 2 (X2) from the high word
         /// of `mouseData`; `(x, y)` is the cursor at event time (physical px) —
         /// the panel pops up next to the pointer. The matching
         /// `WM_XBUTTONUP` is swallowed in the hook without an event (toggle
@@ -589,6 +610,14 @@ mod win {
     /// mid-press is safe: the X events simply pass through again.
     pub fn set_picker_side_buttons(enabled: bool) {
         PICKER_SIDE_BUTTONS.store(enabled, Ordering::SeqCst);
+    }
+
+    /// Apply the `picker.hubButton` setting（0 = 未指定，1 = X1，2 = X2）。
+    /// Idempotent and thread-safe; the assigned button is swallowed and opens
+    /// the selection hub at the pointer. Turning it off mid-press is safe:
+    /// the X events simply pass through again.
+    pub fn set_hub_side_button(button: u8) {
+        HUB_SIDE_BUTTON.store(if button <= 2 { button } else { 0 }, Ordering::SeqCst);
     }
 
     /// Drop the ownership token. Called from every session start / stop /
@@ -879,7 +908,11 @@ mod win {
         }
     }
 
-    /// Worker-side X1/X2: toggle the quick-insert panel at the pointer.
+    /// Worker-side X1/X2: route the click to its assigned panel — the hub side
+    /// button (`picker.hubButton`) opens the selection hub at the pointer,
+    /// every other handled button toggles the quick-insert panel. The two
+    /// panels are mutually exclusive: the other one is closed first so a
+    /// side-button swap never stacks two popups.
     /// 与中键 PTT 同款守卫：设置热键录制期间不打扰。
     fn handle_side_button(button: u8, cursor: (i32, i32)) {
         let Some(app) = APP.get() else {
@@ -888,6 +921,20 @@ mod win {
         let state = app.state::<crate::state::AppState>();
         if state.hotkey_capture_active() {
             return;
+        }
+        if HUB_SIDE_BUTTON.load(Ordering::SeqCst) == button {
+            if crate::picker::is_open() {
+                crate::picker::close_picker(app);
+            }
+            let app = app.clone();
+            let center = (cursor.0 as f64, cursor.1 as f64);
+            tauri::async_runtime::spawn(async move {
+                crate::hub::open_hub(&app, Some(center), crate::hub::HubAnchor::Pointer).await;
+            });
+            return;
+        }
+        if crate::hub::is_open() {
+            crate::hub::close_hub(app);
         }
         crate::picker::toggle(app, button, cursor);
     }
@@ -1182,23 +1229,36 @@ mod win {
             if is_hover_update(message) {
                 evaluate_hover((info.pt.x, info.pt.y));
             }
-            // Quick-insert picker X1/X2: the ONE branch that swallows input.
-            // `WM_XBUTTONDOWN` toggles the panel; both down and up are
-            // withheld from the target app. Returning here also keeps the
+            // Side-button panels: the ONE branch that swallows input.
+            // `WM_XBUTTONDOWN` toggles the button's assigned panel (hub side
+            // button → selection hub at the pointer; otherwise quick-insert
+            // picker) and latches the press ([`SIDE_SWALLOW`]); the matching
+            // `WM_XBUTTONUP` is swallowed off the latch — never off the live
+            // setting — so a config flip mid-press cannot deliver an orphan
+            // half-pair to the target app. Returning here also keeps handled
             // side buttons out of the outside-press dismiss below (X is the
             // toggle gesture, never a dismissal — re-opening right after a
-            // dismiss close would be a footgun).
-            if PICKER_SIDE_BUTTONS.load(Ordering::SeqCst) && is_side_button(message) {
-                if message == WM_XBUTTONDOWN as u32 {
-                    if let Some(button) = xbutton_id(info.mouseData) {
-                        post_event(HookEvent::SideButton {
-                            button,
-                            x: info.pt.x,
-                            y: info.pt.y,
-                        });
+            // dismiss close would be a footgun). A button no panel claims
+            // passes through untouched (browser forward/back stays alive).
+            if is_side_button(message) {
+                if let Some(button) = xbutton_id(info.mouseData) {
+                    let bit = 1u8 << (button - 1);
+                    if message == WM_XBUTTONDOWN as u32 {
+                        let handled = PICKER_SIDE_BUTTONS.load(Ordering::SeqCst)
+                            || HUB_SIDE_BUTTON.load(Ordering::SeqCst) == button;
+                        if handled {
+                            SIDE_SWALLOW.fetch_or(bit, Ordering::SeqCst);
+                            post_event(HookEvent::SideButton {
+                                button,
+                                x: info.pt.x,
+                                y: info.pt.y,
+                            });
+                            return 1;
+                        }
+                    } else if SIDE_SWALLOW.fetch_and(!bit, Ordering::SeqCst) & bit != 0 {
+                        return 1;
                     }
                 }
-                return 1;
             }
             // Hub / picker outside-click dismiss: gated on either panel being
             // open (two atomic loads; ordinary clicks cost nothing). The hit

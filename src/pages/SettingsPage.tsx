@@ -50,6 +50,7 @@ import type {
   AppConfig,
   CloudDialect,
   FillerCleanupMode,
+  HubSideButton,
   LLMRefineConfig,
   LLMProvider,
   LinuxIntegrationStatus,
@@ -176,6 +177,11 @@ function isPickerConfigDirty(current: AppConfig['picker'], original: AppConfig['
 /** Select 值 → 落点字面量：非法值退回默认（命令边界不可信，包括 DOM 事件值）。 */
 function toPickerFocusAction(value: string): PickerFocusAction {
   return value === 'snippets' || value === 'clipboard' || value === 'both' ? value : 'snippets'
+}
+
+/** Select 值 → Hub 侧键字面量：非法值退回「不启用」（命令边界不可信）。 */
+function toHubButton(value: string): HubSideButton {
+  return value === 'x1' || value === 'x2' ? value : 'none'
 }
 
 /**
@@ -2486,6 +2492,28 @@ export default function SettingsPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="pickerHubButton">{t('settings.picker.hubButton')}</Label>
+                    <Select
+                      value={config.picker?.hubButton ?? 'none'}
+                      onValueChange={(value) =>
+                        handlePickerChange({ hubButton: toHubButton(value) })
+                      }
+                    >
+                      <SelectTrigger id="pickerHubButton" className="no-drag w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">{t('settings.picker.hubNone')}</SelectItem>
+                        <SelectItem value="x1">{t('settings.picker.hubX1')}</SelectItem>
+                        <SelectItem value="x2">{t('settings.picker.hubX2')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      {t('settings.picker.hubButtonHelp')}
+                    </p>
                   </div>
 
                   <ToggleRow

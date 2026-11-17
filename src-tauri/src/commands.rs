@@ -1435,6 +1435,7 @@ pub fn set_config(
     crate::mouse::set_middle_click_ptt(merged.mouse.middle_click_ptt);
     // 快速插入面板同理：侧键接管与剪贴板采集都是线程安全开关。
     crate::mouse::set_picker_side_buttons(merged.picker.enabled);
+    crate::mouse::set_hub_side_button(merged.picker.hub_button_id());
     crate::clipboard::set_enabled(merged.picker.clipboard_enabled);
     crate::clipboard::set_limit(merged.picker.clipboard_limit);
     let mut hotkey_rolled_back = false;
@@ -2128,6 +2129,7 @@ pub async fn translate_text(
 /// 右键胶囊入口：toggle 打开 / 收起选区 hub，打开时捕获当前选区。
 /// `center_x` / `center_y` = 可见胶囊中心（**物理像素**，渲染层测量）；
 /// 缺失或非有限时回退 overlay 窗口中心（invoke 边界不可信）。
+/// 胶囊锚点：贴边半环跟随胶囊吸附边（[`crate::hub::HubAnchor::Capsule`]）。
 #[tauri::command]
 pub async fn open_selection_hub(
     app: AppHandle,
@@ -2138,7 +2140,7 @@ pub async fn open_selection_hub(
         (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Some((x, y)),
         _ => None,
     };
-    crate::hub::open_hub(&app, center).await;
+    crate::hub::open_hub(&app, center, crate::hub::HubAnchor::Capsule).await;
     Ok(())
 }
 

@@ -109,6 +109,16 @@ pub struct PickerConfig {
     pub x1_action: String,
     /// X2 单击落点：`snippets` | `clipboard` | `both`。
     pub x2_action: String,
+    /// 快捷 Hub 指定侧键（`none` | `x1` | `x2`）：指定后该键唤出选区快捷 hub
+    /// （以鼠标为环心），另一键保持速插面板；`enabled` 只管速插面板，关掉
+    /// 不影响 hub 侧键（悬浮胶囊关了也一样）。加载走 [`de_lenient_hub_button`]：
+    /// 手改出非法值退回 `none` 而不是让整份配置反序列化失败
+    /// （[`de_lenient_clipboard_limit`] 同一理由）。
+    #[serde(
+        default = "default_hub_button",
+        deserialize_with = "de_lenient_hub_button"
+    )]
+    pub hub_button: String,
     /// 启用剪贴板采集（本地环形缓冲，只存文本；隐私总开关）。
     pub clipboard_enabled: bool,
     /// 剪贴板条数上限（5–100）。加载走 [`de_lenient_clipboard_limit`]：
@@ -135,6 +145,7 @@ impl Default for PickerConfig {
             enabled: true,
             x1_action: "snippets".into(),
             x2_action: "clipboard".into(),
+            hub_button: default_hub_button(),
             clipboard_enabled: true,
             clipboard_limit: default_clipboard_limit(),
             learn_snippets: true,
@@ -145,6 +156,32 @@ impl Default for PickerConfig {
 
 fn default_clipboard_limit() -> u32 {
     30
+}
+
+fn default_hub_button() -> String {
+    "none".into()
+}
+
+impl PickerConfig {
+    /// `hub_button` 字面量 → 钩子用侧键编号（1 = X1，2 = X2，0 = 未指定）。
+    pub fn hub_button_id(&self) -> u8 {
+        match self.hub_button.as_str() {
+            "x1" => 1,
+            "x2" => 2,
+            _ => 0,
+        }
+    }
+}
+
+/// `hubButton` 的宽容加载：只接受 `none` / `x1` / `x2`，其余（含非字符串）
+/// 退回 [`default_hub_button`]。与 [`de_lenient_clipboard_limit`] 同一理由：
+/// 手改配置不能拖垮整份配置。invoke 边界走严格版 [`normalize_hub_button`]。
+fn de_lenient_hub_button<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(normalize_hub_button(value.as_str().unwrap_or("")).unwrap_or_else(default_hub_button))
 }
 
 /// `clipboardLimit` 的宽容加载：数字夹取 5–100，其余（字符串 / 负数 / null /
@@ -742,6 +779,15 @@ pub fn normalize_snippet_action(raw: &str) -> Option<String> {
     }
 }
 
+/// hub 指定侧键：仅接受 `none` / `x1` / `x2`；其余返回 `None`
+/// （调用方保留旧值，与 [`normalize_snippet_action`] 同一策略）。
+pub fn normalize_hub_button(raw: &str) -> Option<String> {
+    match raw {
+        "none" | "x1" | "x2" => Some(raw.to_string()),
+        _ => None,
+    }
+}
+
 /// 剪贴板条数上限：夹取到 5–100（默认 30）。非法类型返回 `None`。
 pub fn normalize_clipboard_limit(raw: &serde_json::Value) -> Option<u32> {
     raw.as_u64().map(|n| n.clamp(5, 100) as u32)
@@ -1088,6 +1134,11 @@ impl ConfigStore {
                         merged.picker.x2_action = valid;
                     }
                 }
+                if let Some(v) = obj.get("hubButton").and_then(|v| v.as_str()) {
+                    if let Some(valid) = normalize_hub_button(v) {
+                        merged.picker.hub_button = valid;
+                    }
+                }
                 if let Some(v) = obj.get("clipboardEnabled").and_then(|v| v.as_bool()) {
                     merged.picker.clipboard_enabled = v;
                 }
@@ -1153,6 +1204,35 @@ mod tests {
     }
 
     #[test]
+    fn normalize_hub_button_accepts_only_none_x1_x2() {
+        assert_eq!(normalize_hub_button("none").as_deref(), Some("none"));
+        assert_eq!(normalize_hub_button("x1").as_deref(), Some("x1"));
+        assert_eq!(normalize_hub_button("x2").as_deref(), Some("x2"));
+        assert_eq!(normalize_hub_button("X1"), None);
+        assert_eq!(normalize_hub_button("hub"), None);
+    }
+
+    #[test]
+    fn hub_button_id_maps_literal_to_hook_button() {
+        let config = PickerConfig {
+            hub_button: "x1".into(),
+            ..Default::default()
+        };
+        assert_eq!(config.hub_button_id(), 1);
+        let config = PickerConfig {
+            hub_button: "x2".into(),
+            ..Default::default()
+        };
+        assert_eq!(config.hub_button_id(), 2);
+        assert_eq!(PickerConfig::default().hub_button_id(), 0);
+        let config = PickerConfig {
+            hub_button: "nope".into(),
+            ..Default::default()
+        };
+        assert_eq!(config.hub_button_id(), 0);
+    }
+
+    #[test]
     fn normalize_clipboard_limit_clamps_into_range() {
         assert_eq!(
             normalize_clipboard_limit(&serde_json::json!(30)),
@@ -1197,6 +1277,7 @@ mod tests {
                 "picker": {
                     "enabled": false,
                     "x1Action": "both",
+                    "hubButton": "x2",
                     "clipboardLimit": 2,
                     "userSnippets": ["好嘞"]
                 }
@@ -1204,14 +1285,16 @@ mod tests {
             .unwrap();
         assert!(!merged.picker.enabled);
         assert_eq!(merged.picker.x1_action, "both");
+        assert_eq!(merged.picker.hub_button, "x2");
         assert_eq!(merged.picker.clipboard_limit, 5); // clamped
         assert_eq!(merged.picker.user_snippets, vec!["好嘞".to_string()]);
 
-        // 未提及的字段保留已存值；非法动作保留旧值。
+        // 未提及的字段保留已存值；非法动作 / 非法侧键保留旧值。
         let merged = store
-            .merge(&serde_json::json!({ "picker": { "x1Action": "nope" } }))
+            .merge(&serde_json::json!({ "picker": { "x1Action": "nope", "hubButton": "X9" } }))
             .unwrap();
         assert_eq!(merged.picker.x1_action, "both");
+        assert_eq!(merged.picker.hub_button, "x2");
         assert!(!merged.picker.enabled);
 
         assert!(store
@@ -1231,6 +1314,20 @@ mod tests {
         assert_eq!(parse(r#"{"clipboardLimit":"abc"}"#).clipboard_limit, 30);
         assert_eq!(parse(r#"{"clipboardLimit":999}"#).clipboard_limit, 100);
         assert_eq!(parse(r#"{}"#).clipboard_limit, 30);
+    }
+
+    /// `hubButton` 宽容加载：非法值（含非字符串）退回 `none`，绝不拖垮整份
+    /// 配置（同 `clipboardLimit` 理由）。
+    #[test]
+    fn hub_button_deserializes_leniently() {
+        let parse = |raw: &str| -> PickerConfig {
+            serde_json::from_str(raw).expect("lenient picker config must deserialize")
+        };
+        assert_eq!(parse(r#"{"hubButton":"x2"}"#).hub_button, "x2");
+        assert_eq!(parse(r#"{"hubButton":"X1"}"#).hub_button, "none");
+        assert_eq!(parse(r#"{"hubButton":1}"#).hub_button, "none");
+        assert_eq!(parse(r#"{"hubButton":null}"#).hub_button, "none");
+        assert_eq!(parse(r#"{}"#).hub_button, "none");
     }
 
     /// `userSnippets` 宽容加载：形状非法整体退回空表、坏条目丢弃、超限截断

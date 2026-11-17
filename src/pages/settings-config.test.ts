@@ -13,6 +13,7 @@ import {
   isRefineConfigComplete,
   isRefineConnectionCacheFresh,
   markRefineConnectionValidated,
+  normalizePickerConfig,
   readRefineFeatureFlags,
   reconcileRefineFeaturesAfterConnectionChange,
   resolveMicrophoneDeviceMigration,
@@ -478,5 +479,22 @@ describe('refine connection validation cache', () => {
     invalidateRefineConnection(cache, fingerprint)
 
     expect(isRefineConnectionCacheFresh(cache, fingerprint, now)).toBe(false)
+  })
+})
+
+describe('picker config normalization', () => {
+  it('keeps valid hub button picks and defaults to none', () => {
+    expect(normalizePickerConfig({ hubButton: 'x1' }).hubButton).toBe('x1')
+    expect(normalizePickerConfig({ hubButton: 'x2' }).hubButton).toBe('x2')
+    expect(normalizePickerConfig({ hubButton: 'none' }).hubButton).toBe('none')
+    expect(normalizePickerConfig({}).hubButton).toBe('none')
+    expect(normalizePickerConfig({ hubButton: 'X1' as never }).hubButton).toBe('none')
+    expect(normalizePickerConfig({ hubButton: 'hub' as never }).hubButton).toBe('none')
+  })
+
+  it('keeps hub button distinct from the panel master switch', () => {
+    const config = normalizePickerConfig({ enabled: false, hubButton: 'x2' })
+    expect(config.enabled).toBe(false)
+    expect(config.hubButton).toBe('x2')
   })
 })

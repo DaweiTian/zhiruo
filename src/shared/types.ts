@@ -166,17 +166,22 @@ export interface MouseConfig {
 /** 快速插入面板落点（鼠标侧键 X1/X2 默认打开的区域）。 */
 export type PickerFocusAction = 'snippets' | 'clipboard' | 'both'
 
+/** 快捷 Hub 指定侧键（`none` = 不指定；指定侧键以鼠标为环心唤出选区快捷 hub）。 */
+export type HubSideButton = 'none' | 'x1' | 'x2'
+
 /**
  * 快速插入面板（鼠标侧键 X1/X2 唤出）配置。侧键接管是 Windows-only；
  * `userSnippets` 是手动管理的常用词（上限 100 条 × 64 字符）。
  */
 export interface PickerConfig {
-  /** 启用侧键快速插入（关掉即 X1/X2 恢复前进/后退）。 */
+  /** 启用侧键快速插入（关掉即未指定 Hub 的侧键恢复前进/后退）。 */
   enabled: boolean
   /** X1 单击落点。 */
   x1Action: PickerFocusAction
   /** X2 单击落点。 */
   x2Action: PickerFocusAction
+  /** 快捷 Hub 指定侧键（该键唤出 hub，另一键保持速插；面板开关不影响它）。 */
+  hubButton: HubSideButton
   /** 启用剪贴板采集（本地环形缓冲，只存文本）。 */
   clipboardEnabled: boolean
   /** 剪贴板条数上限（5–100）。 */

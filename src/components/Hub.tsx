@@ -188,8 +188,8 @@ export function Hub() {
             className={cn(
               'max-w-full whitespace-normal break-words rounded-2xl px-3 py-1 text-center text-[11px] leading-snug ring-1',
               state.status === 'error'
-                ? 'bg-red-950/80 text-red-200 ring-red-400/25'
-                : 'bg-neutral-900/85 text-neutral-300 ring-white/10',
+                ? 'bg-destructive/85 text-destructive-foreground ring-destructive/30'
+                : 'bg-popover/85 text-popover-foreground ring-border',
             )}
           >
             {statusText}
@@ -197,7 +197,7 @@ export function Hub() {
         )}
         {/* ready：选区预览一行（截断），提示动作对象。 */}
         {state.status === 'ready' && state.preview && (
-          <div className="max-w-full truncate rounded-full bg-neutral-900/70 px-3 py-1 text-[10px] text-neutral-400 ring-1 ring-white/[0.06]">
+          <div className="max-w-full truncate rounded-full bg-popover/70 px-3 py-1 text-[10px] text-muted-foreground ring-1 ring-border/60">
             {state.preview}
           </div>
         )}
@@ -267,17 +267,17 @@ export function Hub() {
       {/* 解释类结果卡片：不动原文，只展示 + 复制。 */}
       {state.status === 'result' && (
         <div
-          className="absolute inset-x-5 top-1/2 z-10 -translate-y-1/2 rounded-2xl bg-neutral-900/92 p-4 shadow-xl ring-1 ring-white/10"
+          className="absolute inset-x-5 top-1/2 z-10 -translate-y-1/2 rounded-2xl bg-popover/92 p-4 text-popover-foreground shadow-xl ring-1 ring-border"
           onClick={(event) => event.stopPropagation()}
         >
-          <div className="text-xs font-medium text-neutral-100">{t('hub.explainTitle')}</div>
-          <div className="mt-2 max-h-[150px] overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-neutral-300">
+          <div className="text-xs font-medium">{t('hub.explainTitle')}</div>
+          <div className="mt-2 max-h-[150px] overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-foreground/85">
             {state.result}
           </div>
           <div className="mt-3 flex justify-end gap-2">
             <button
               type="button"
-              className="rounded-full px-3 py-1 text-[11px] text-neutral-300 ring-1 ring-white/10 transition-colors hover:bg-white/10"
+              className="rounded-full px-3 py-1 text-[11px] text-foreground/80 ring-1 ring-border transition-colors hover:bg-accent hover:text-foreground"
               onClick={copyResult}
             >
               {copied ? t('hub.copied') : t('hub.copy')}

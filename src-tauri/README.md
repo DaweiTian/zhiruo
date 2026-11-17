@@ -320,7 +320,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
     常驻，hover 穿透不受影响）；
     `set_hotkey_capture_active` 维护快捷键录制态守卫。
     **选区快捷动作 hub 命令**：`open_selection_hub`（右键胶囊 toggle 打开/收起，
-    附可见胶囊中心物理像素锚点，invoke 边界校验有限性）、`close_selection_hub`、
+    附可见胶囊中心物理像素锚点，invoke 边界校验有限性；侧键唤出走 `mouse.rs`
+    直达 `hub::open_hub` 的鼠标锚点路径，不经命令）、`close_selection_hub`、
     `run_selection_hub_action`（action ∈ translate/polish/explain）、`copy_text`
     （结果卡片显式复制，写剪贴板不还原）。
 - `src/stats.rs` - 独立累计统计存储（`voice-key-stats.json`）：识别字符总数 /
@@ -363,9 +364,11 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   默认可交互，渲染层挂了也不会留下点不到的死胶囊）；推送 `null`（胶囊消失）= 恒
   穿透。窗口移动（拖拽 / 吸附 / 复位）经 `commands::OverlayFrame::apply` 统一触发
   `refresh_capsule_hover`（光标静止 + 胶囊移位的悬停重算）。**侧键 X1/X2（批次一）**：
-  `picker.enabled` 开启时 `WM_XBUTTONDOWN/UP` 被**吞掉**（钩子返回 1，唯一例外于
-  "观察不拦截"——浏览器前进/后退随之失效，产品确认接受），down 走 enqueue 唤出 /
-  收起快速插入面板（开关语义，toggle）；关闭即完全放行。非 Windows 为 no-op stub
+  被认领的侧键 `WM_XBUTTONDOWN/UP` 被**吞掉**（钩子返回 1，唯一例外于
+  "观察不拦截"——浏览器前进/后退随之失效，产品确认接受），down 走 enqueue 按
+  认领路由（`picker.enabled` → 速插面板 toggle；`picker.hubButton` 指定的键 →
+  选区 hub 以鼠标为环心，面板开关不影响它），两面板互斥、后开先关；无人认领
+  的侧键完全放行（前进/后退保留）。非 Windows 为 no-op stub
   （无钩子即保持旧行为、不回归）。
   **中键 PTT**：`WM_MBUTTONDOWN` 启动会话、
   `WM_MBUTTONUP` 停止，观察不吞键（始终 `CallNextHookEx`），由 `mouse.middleClickPtt`
@@ -421,17 +424,24 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   "进行中"），全流程 spawn 到 async runtime 执行，不阻塞快捷键回调；反馈后 1.2s
   回 idle 复用 `commands::overlay_idle_later`；Hyprland 会话剪贴板
   走 `wl-paste`/`wl-copy`（`inject.rs`），其余平台走 `arboard`。
-- `src/hub.rs` - 选区快捷动作 hub 编排（右键常驻胶囊唤出的圆环动作面板）：
+- `src/hub.rs` - 选区快捷动作 hub 编排（右键常驻胶囊 / `picker.hubButton` 指定
+  侧键唤出的圆环动作面板）：
   打开即哨兵捕获选区（`translate::capture_selection_text`，文本暂存供动作点击
   使用）、`hub-update` 事件状态流（capturing → ready / empty → processing →
   done / result / error；**每条载荷统一带 `dockEdge` 与 `ringCenter`**，动作中段
   丢几何会让贴边圆环闪回全环）、动作执行复用 `translate::run_with_text`（与翻译
-  快捷键共用 `BusyGuard` 互斥）。窗口定位 = 可见胶囊中心（渲染层测量的物理像素
-  锚点）压 hub 窗口中点后**整窗钳进锚点所在屏幕的工作区**（`commands::OverlayFrame`，
-  贴边不再半出屏，状态文字 / 结果卡片始终完整可见）；圆环不跟随窗口——环心偏移
-  `ringCenter`（webview CSS px，set_position 后按实际落位换算）随载荷下发，
-  渲染层偏移圆环 SVG 把圆环钉回胶囊中心，半环按 `app.overlayDocked` 朝屏幕内
-  展开；窗口生命周期归 `windowing::ensure_hub_window`（隐藏 / 重建，绝不销毁）。
+  快捷键共用 `BusyGuard` 互斥）。锚点二选一（`HubAnchor`）：胶囊中心跟随吸附边
+  画半环；鼠标指针（侧键唤出）永远完整圆环、`dockEdge` 恒下发 `null`（贴近屏幕
+  边由渲染层 `edgeFromRingCenter` 兜底），悬浮胶囊关掉也不影响。窗口定位 = 锚点
+  （物理像素）压 hub 窗口中点后**整窗钳进锚点所在屏幕的工作区**
+  （`commands::OverlayFrame`，贴边不再半出屏，状态文字 / 结果卡片始终完整可见）；
+  圆环不跟随窗口——环心偏移 `ringCenter`（webview CSS px，set_position 后按实际
+  落位换算）随载荷下发，渲染层偏移圆环 SVG 把圆环钉回锚点。开关时序照
+  `picker.rs` 代际纪律：打开序列由 `OPEN_LOCK` 串行（tokio 多线程并行，不串行
+  会交错 place/show、环心互相覆盖），每次打开发代际，捕获迟到结果、动作迟到
+  结果与「已替换」延迟收起都带代际条件，连按侧键的收起 → 重开不被陈旧收尾误伤；
+  启动时独立线程**预创建** hub 窗口（同 picker）。窗口生命周期归
+  `windowing::ensure_hub_window`（隐藏 / 重建，绝不销毁）。
   收起 = 渲染层背景点击 / 右键、结果卡片关闭按钮、替换成功延时收起、Windows
   `mouse.rs` 点外收起（`is_open` 供其门禁）。
 - `src/clipboard.rs` - 最近剪贴板环形缓冲（快速插入面板的自建剪贴板历史，
@@ -457,8 +467,9 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   绝不销毁）。
 - `src/config.rs` - 配置存储（`voice-key-config.json`）。ASR 段含
   `micKeepAlive`（麦克风保温，默认开）等录音行为开关；`picker` 段含快速插入面板
-  （侧键 X1/X2、剪贴板采集、常用词 `userSnippets`，normalizer 与 userGlossary
-  同一纪律）。**配置写入线程安全**：
+  （侧键 X1/X2 落点、`hubButton` 快捷 hub 指定侧键 `none | x1 | x2`、剪贴板采集、
+  常用词 `userSnippets`，normalizer 与 userGlossary
+  同一纪律；手改易错字段走宽容加载 `de_lenient_*`，非法值退默认不整份冲掉）。**配置写入线程安全**：
   所有写入口（`merge`：`set_config` 及其快捷键回滚、`test_refine_connection`、
   `set_app_language`、overlay 显隐 flag / 拖拽位置持久化）的
   load → mutate → save 全程持进程级 `CONFIG_LOCK`（与 `stats.rs` 的 `STATS_LOCK`

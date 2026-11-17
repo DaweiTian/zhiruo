@@ -208,6 +208,7 @@ pub fn run() {
             // 快速插入面板：侧键 X1/X2 接管 + 最近剪贴板采集（Windows 钩子 /
             // 跨平台轮询）。
             mouse::set_picker_side_buttons(config.picker.enabled);
+            mouse::set_hub_side_button(config.picker.hub_button_id());
             clipboard::init(
                 config.picker.clipboard_enabled,
                 config.picker.clipboard_limit,
@@ -216,10 +217,13 @@ pub fn run() {
             // 定位 / show 的轻活，不会被 WebView 创建堵住——worker 一旦阻塞，
             // 中键 PTT 的弹跳窗时序与 Disable 立即停止的语义都会失真。
             // 窗口创建必须离开主线程（wry#583），独立线程预热最稳。
+            // hub 侧键走 async spawn，但 hub 窗口同样预建：首开的 WebView
+            // 创建会让捕获时序变慢，显隐抖动也难看。
             {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     crate::windowing::ensure_picker_window(&handle);
+                    crate::windowing::ensure_hub_window(&handle);
                 });
             }
             // The HUD capsule is an always-on standby launcher now. The show

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.12.0](https://github.com/DaweiTian/zhiruo/compare/v0.11.0...v0.12.0) (2026-11-17)
+
+### Features
+
+- **inject:** 文本注入兼容回退（功能方案设计 2.2）——`inject.mode` 四档：`paste`（现状：剪贴板 + Ctrl/V，Hyprland 为 wl-copy + Shift+Insert）/ `type`（enigo 逐字键入、不碰剪贴板，多行按真实回车逐行落地）/ `clipboard`（只写剪贴板）/ `auto`（默认，paste 失败 → type → clipboard 逐级兜底）；任何失败**尽力把文本留在剪贴板**可手动粘贴。注入只落剪贴板 / 失败时发 `inject-fallback`，HUD 待机胶囊旁软提示 4 秒自隐（按 `dockEdge` 选屏内半区，贴边「半隐」几何下也不出屏；面板内插入失败由面板 toast 承担，不重复吵）
+- **settings:** 「文本注入」小节（Select 四选一，全平台）；帮助文案诚实：`auto` 只能捕获报错、检测不到「快捷键静默没粘上」，逐字键入对中文依赖输入法状态、建议用粘贴
+- **picker:** 条目动作按钮改**纵向排列**（固定 / 删除上下叠，少挤正文宽度）
+
+### Notes
+
+- `inject` 配置段级 + 字段级双层宽容加载：手改坏配置退默认（`auto`），不拖垮整份配置（API key 等不受牵连）
+- 原批次 2.1「回溯缓冲」**不做**（用户拍板）：识别准确性已足够，预卷会把按键前环境噪声带进会话
+- 更正 Hyprland 注入描述的过时「wtype」文案（实际为 wl-copy + Shift+Insert）
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.11.0](https://github.com/DaweiTian/zhiruo/compare/v0.10.0...v0.11.0) (2026-11-17)
 
 ### Features

@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.10.0](https://github.com/DaweiTian/zhiruo/compare/v0.9.0...v0.10.0) (2026-11-17)
+
+### Features
+
+- **hub:** 侧键唤出快捷 hub（设置「快捷 Hub 侧键」指定 X1/X2，另一键保持速插面板）——圆环以**鼠标为环心**展开，翻译 / 润色 / 解释三扇区围着指针；速插总开关与悬浮胶囊关闭均不影响 hub 侧键（胶囊关了照用），未认领侧键完全放行（浏览器前进/后退可恢复）；鼠标锚点不跟胶囊吸附边，贴屏边由 `edgeFromRingCenter` 兜底半环（仅 Windows，设置项非 Windows 隐藏）
+
+### Bug Fixes
+
+- **theme:** 侧键弹窗与左下角版本号底板不随主题变化（冒烟发现）——速插面板写死的暗色全换主题 token；`useTheme` 挂 `storage` 事件**跨窗口同步**，picker/hub 预建常驻窗口立刻追上主窗口的主题切换，不再停在启动时的主题；版本号 LED 底板改取 `--card`/`--border`、分段与标签色向 `--foreground` 混色，亮主题保对比度、暗主题保留凹陷质感
+- **hub:** 面板配色随主题——信息胶囊 / 选区预览 / 结果卡片换 `popover` 系 token，扇区玻璃随主题取色并保留晕影对比度机制（扇区压任意桌面内容，下垫什么都要可读）
+- **hub:** 开关时序按 picker 代际纪律加固——打开序列加 `OPEN_LOCK` 串行（tokio 并行交错 place/show 会互相覆盖环心）；捕获 / 动作迟到结果与「已替换」延迟收起带**代际条件**（连按侧键收起 → 重开不被陈旧收尾误伤、旧选区不灌进新会话）；toggle 收起持锁防连按双关；hub/速插两面板互斥（胶囊右键开 hub 也先收速插面板）
+- **mouse:** 侧键吞事件按**按压锁存**（DOWN 锁存至配对 UP）——按住侧键期间配置热更新不再只吞一半、向目标应用漏孤立按键
+
+### Notes
+
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.9.0](https://github.com/DaweiTian/zhiruo/compare/v0.8.2...v0.9.0) (2026-11-17)
 
 ### Features

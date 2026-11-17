@@ -52,8 +52,8 @@ const SEG_POLY: Record<string, string> = {
 const ALL_SEGS = ['a', 'b', 'c', 'd', 'e', 'f', 'g'] as const
 
 /**
- * 七段数码管显示：暗底 LED 模块 + 分段数字，点亮段继承主题主色并带辉光，
- * 未点亮段保留幽灵段（真实数码管的暗段质感）。
+ * 七段数码管显示：LED 模块底板随主题（`vk-seg-plate` 取 card 色）+ 分段数字，
+ * 点亮段继承主题主色并带辉光，未点亮段保留幽灵段（真实数码管的暗段质感）。
  */
 export function SegmentDisplay({ value, className }: SegmentDisplayProps) {
   const chars = Array.from(value)

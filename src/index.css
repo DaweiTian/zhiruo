@@ -558,15 +558,19 @@ html.vk-theme-changing *::after {
   }
 }
 
-/* 七段数码管（版本号等）：暗底 LED 模块 + 主题色辉光 */
+/* 七段数码管（版本号等）：LED 模块底板随主题取 card 色 + 主题色辉光 */
 .vk-seg-plate {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 9px 5px;
   border-radius: 7px;
-  background: oklch(0.17 0.012 255);
-  border: 1px solid oklch(0.32 0.02 255);
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.12);
+}
+/* 暗主题保留凹陷 LED 质感；亮主题同深度会压出脏边 */
+html.dark .vk-seg-plate {
   box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.4);
 }
 .vk-seg-plate-tag {
@@ -575,11 +579,12 @@ html.vk-theme-changing *::after {
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.08em;
-  color: color-mix(in oklch, var(--primary) 72%, white);
+  /* 向 --foreground 混色：亮主题加深保对比，暗主题近似原白混效果 */
+  color: color-mix(in oklch, var(--primary) 72%, var(--foreground));
   opacity: 0.85;
 }
 .vk-seg-on {
-  fill: color-mix(in oklch, var(--primary) 80%, white);
+  fill: color-mix(in oklch, var(--primary) 80%, var(--foreground));
   filter: drop-shadow(0 0 2.2px color-mix(in oklch, var(--primary) 75%, transparent));
 }
 .vk-seg-off {

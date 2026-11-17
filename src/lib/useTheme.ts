@@ -227,9 +227,46 @@ function applyToDom(snapshot: ThemeSnapshot) {
   domApplied = true
 }
 
+let storageListenerInstalled = false
+
+/** 跨窗口同步：picker/hub 等预建窗口的 webview 常驻，本窗口模块状态只在
+ *  启动时读过一次 localStorage；其它窗口改主题会触发 storage 事件，不跟上
+ *  就永远停在启动主题。 */
+function syncFromStorage() {
+  const current = ensureState()
+  let rawTheme: string | null = null
+  let rawAccent: string | null = null
+  try {
+    rawTheme = localStorage.getItem(THEME_STORAGE_KEY)
+    rawAccent = localStorage.getItem(ACCENT_STORAGE_KEY)
+  } catch {
+    /* ignore */
+  }
+  const theme = resolveTheme(rawTheme) ?? current.theme
+  const accent = resolveAccent(rawAccent)
+  if (theme === current.theme && accent === current.accent) return
+  runWithoutTransitions(() => {
+    applyTheme(theme)
+    applyAccent(accent)
+  })
+  commitStore({ theme, accent })
+}
+
+function handleStorageEvent(event: StorageEvent) {
+  // 只跟主题/强调色；picker 使用计数等其它键的写入不触发主题重算。
+  if (event.key !== null && event.key !== THEME_STORAGE_KEY && event.key !== ACCENT_STORAGE_KEY) {
+    return
+  }
+  syncFromStorage()
+}
+
 /** 幂等：把持久化中的主题/强调色应用到当前窗口 <html>。main.tsx 对所有窗口入口调用。 */
 export function initThemeStore() {
   applyToDom(ensureState())
+  if (!storageListenerInstalled) {
+    storageListenerInstalled = true
+    window.addEventListener('storage', handleStorageEvent)
+  }
 }
 
 function getSnapshot(): ThemeSnapshot {

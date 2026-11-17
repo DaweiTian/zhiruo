@@ -219,7 +219,7 @@ export function Picker() {
       }}
     >
       <div
-        className="absolute inset-2 flex flex-col overflow-hidden rounded-xl bg-neutral-900/95 shadow-xl ring-1 ring-white/10"
+        className="absolute inset-2 flex flex-col overflow-hidden rounded-xl bg-popover/95 text-popover-foreground shadow-xl ring-1 ring-border"
         onClick={(event) => event.stopPropagation()}
       >
         {/* 两区共用滚动容器：常用词（置顶常用项）在上，最近剪贴板在下。 */}
@@ -245,7 +245,7 @@ export function Picker() {
             showTime
           />
         </div>
-        <div className="border-t border-white/[0.06] px-3 py-1.5 text-[10px] leading-relaxed text-neutral-500">
+        <div className="border-t border-border/60 px-3 py-1.5 text-[10px] leading-relaxed text-muted-foreground">
           {t('picker.hint')}
         </div>
       </div>
@@ -277,13 +277,13 @@ function Section({
   return (
     <div className="px-2 pb-1">
       <div className="flex items-baseline justify-between px-1.5 pb-1 pt-1">
-        <span className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {title}
         </span>
-        {count > 0 && <span className="text-[10px] text-neutral-600">{count}</span>}
+        {count > 0 && <span className="text-[10px] text-muted-foreground/70">{count}</span>}
       </div>
       {count === 0 ? (
-        <div className="px-1.5 pb-1.5 text-[11px] leading-relaxed text-neutral-600">
+        <div className="px-1.5 pb-1.5 text-[11px] leading-relaxed text-muted-foreground">
           {emptyText}
         </div>
       ) : (
@@ -299,8 +299,8 @@ function Section({
                 className={cn(
                   'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
                   selected
-                    ? 'bg-primary/20 text-neutral-100 ring-1 ring-primary/40'
-                    : 'text-neutral-300 hover:bg-white/[0.06]',
+                    ? 'bg-primary/20 text-foreground ring-1 ring-primary/40'
+                    : 'text-foreground/80 hover:bg-accent hover:text-foreground',
                 )}
                 onMouseEnter={() => onSelect(absolute)}
                 onClick={() => onInsert(item)}
@@ -309,7 +309,9 @@ function Section({
                   {item.text}
                 </span>
                 {showTime && item.timeLabel && (
-                  <span className="shrink-0 text-[9px] text-neutral-500">{item.timeLabel}</span>
+                  <span className="shrink-0 text-[9px] text-muted-foreground">
+                    {item.timeLabel}
+                  </span>
                 )}
               </button>
             )

@@ -94,6 +94,10 @@ pub struct AudioSession {
     pub started_at: u64,
     /// 已接收音频字节累计（chunks + pcm），用于 `MAX_SESSION_AUDIO_BYTES` 护栏。
     pub audio_bytes: usize,
+    /// `cancel()` 置位：在途 stop（已 claim、ASR / LLM 还在跑）必须丢弃结果，
+    /// 不得注入用户已取消的文本、不得再写 complete / 发 success。下一次
+    /// `start()` 复位。
+    pub cancelled: bool,
 }
 
 pub fn now_ms() -> u64 {
@@ -117,6 +121,7 @@ impl AudioSession {
         self.final_chunk_seen = false;
         self.started_at = now_ms();
         self.audio_bytes = 0;
+        self.cancelled = false;
         let mode = if streaming { "streaming" } else { "classic" };
         RecordingStartPayload {
             session_id: id,
@@ -214,6 +219,7 @@ impl AudioSession {
         self.pcm.clear();
         self.status = SessionStatus::Idle;
         self.error = Some("cancelled".into());
+        self.cancelled = true;
     }
 
     pub fn status_name(&self) -> String {
@@ -231,6 +237,23 @@ impl AudioSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `cancel()` marks the session cancelled so an in-flight stop discards
+    /// its result (no inject / complete / success); `start()` resets the flag
+    /// so a fresh session is never poisoned by a previous cancel.
+    #[test]
+    fn cancel_sets_flag_and_start_resets_it() {
+        let mut session = AudioSession::default();
+        assert!(!session.cancelled);
+        session.start(false);
+        assert!(!session.cancelled);
+        session.cancel();
+        assert!(session.cancelled);
+        assert_eq!(session.status, SessionStatus::Idle);
+        session.start(false);
+        assert!(!session.cancelled);
+        assert_eq!(session.status, SessionStatus::Recording);
+    }
 
     /// The cap must stay identical to the renderer constant
     /// (`RECORDING.SESSION_MAX_DURATION_SECONDS` in `src/shared/constants.ts`):

@@ -250,6 +250,36 @@ where
     Ok(terms)
 }
 
+/// `userGlossary` 的宽容加载：形状非法整体退空表；非法条目（非字符串 / 超
+/// 64 字符）逐条丢弃、重复与空串清洗、超 100 条截断（[`de_lenient_user_snippets`]
+/// 同一理由）。invoke 边界严格版在 [`normalize_user_glossary`]。
+fn de_lenient_user_glossary<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(items) = value.as_array() else {
+        return Ok(Vec::new());
+    };
+    let mut terms: Vec<String> = Vec::new();
+    for item in items {
+        let Some(s) = item.as_str() else {
+            continue;
+        };
+        let trimmed = s.trim();
+        if trimmed.is_empty() || trimmed.chars().count() > 64 {
+            continue;
+        }
+        if !terms.iter().any(|t| t == trimmed) {
+            terms.push(trimmed.to_string());
+            if terms.len() >= 100 {
+                break;
+            }
+        }
+    }
+    Ok(terms)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ASRConfig {
@@ -355,7 +385,10 @@ pub struct LLMRefineConfig {
     pub model: String,
     #[serde(default)]
     pub api_key: String,
-    #[serde(default = "default_true")]
+    /// 缺键默认 **false**：与 `Default` 实现、渲染层 `constants.ts` 默认值
+    /// 三方一致（0.15 审计 MEDIUM——此前 serde 缺键回退 true，老配置缺字段
+    /// 会被静默打开「语音输入翻译」）。
+    #[serde(default)]
     pub translate_output: bool,
     #[serde(default)]
     pub openai: ProviderKeyConfig,
@@ -370,7 +403,11 @@ pub struct LLMRefineConfig {
     #[serde(default)]
     pub custom: ProviderKeyConfig,
     /// 用户词表（人名/术语）。非敏感，与 API key 同侧持久化，但不参与脱敏。
-    #[serde(default)]
+    /// 加载走 [`de_lenient_user_glossary`]：手改出坏条目逐条丢弃而不是整份
+    /// 配置反序列化失败（[`de_lenient_user_snippets`] 同一理由——`load()` 的
+    /// 整体回退会清掉 API key 等一切设置）。invoke 边界严格校验在
+    /// [`normalize_user_glossary`]。
+    #[serde(default, deserialize_with = "de_lenient_user_glossary")]
     pub user_glossary: Vec<String>,
     /// 口水词清理档位："off" | "rules" | "llm"。非法/缺失值按 "off"。
     #[serde(default)]
@@ -504,7 +541,9 @@ impl Default for TranslationConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            target_language: "English".into(),
+            // Select 值口径（`TARGET_LANGUAGES.value`：'english' / 'chinese' …），
+            // 与渲染层常量一致；历史手写 "English" 由渲染层 Select 兜底归一。
+            target_language: "english".into(),
         }
     }
 }
@@ -1103,7 +1142,8 @@ impl ConfigStore {
             // snapshot. An explicit value always wins; absent keys keep stored.
             if let Some(obj) = app.as_object() {
                 if let Some(v) = obj.get("language").and_then(|v| v.as_str()) {
-                    merged.app.language = v.to_string();
+                    // 与 `targetLanguage` 同口径的长度护栏：手改/异常载荷不撑大配置。
+                    merged.app.language = v.chars().take(32).collect();
                 }
                 if let Some(v) = obj.get("autoLaunch").and_then(|v| v.as_bool()) {
                     merged.app.auto_launch = v;
@@ -1712,6 +1752,39 @@ mod tests {
         // 超 100 条截断到 100。
         let many = (0..120).map(|i| format!("\"s{i}\"")).collect::<Vec<_>>().join(",");
         assert_eq!(parse(&format!(r#"{{"userSnippets":[{many}]}}"#)).user_snippets.len(), 100);
+    }
+
+    /// `userGlossary` 宽容加载：手改出坏条目逐条丢弃而不是整份配置反序列化
+    /// 失败（0.15 审计 MEDIUM——此前缺 `de_lenient` 兄弟，一个坏条目会触发
+    /// `load()` 整体回退、清空 API key）。
+    #[test]
+    fn user_glossary_deserializes_leniently() {
+        let parse = |raw: &str| -> LLMRefineConfig {
+            serde_json::from_str(raw).expect("lenient refine config must deserialize")
+        };
+        assert_eq!(
+            parse(r#"{"userGlossary":[" 张伟 ","张伟","",42,"芷若"]}"#).user_glossary,
+            vec!["张伟".to_string(), "芷若".to_string()]
+        );
+        // 形状非法（非数组）→ 空表，而不是整份配置解析失败。
+        assert_eq!(
+            parse(r#"{"userGlossary":42}"#).user_glossary,
+            Vec::<String>::new()
+        );
+        // 超 64 字符的条目逐条丢弃（不拖垮整份）。
+        let over: String = "x".repeat(65);
+        assert_eq!(
+            parse(&format!(r#"{{"userGlossary":["{over}","芷若"]}}"#)).user_glossary,
+            vec!["芷若".to_string()]
+        );
+    }
+
+    /// `translateOutput` 缺键默认 false：与 `Default` 实现、渲染层
+    /// `constants.ts` 默认三方一致（0.15 审计——此前 serde 缺键回退 true）。
+    #[test]
+    fn translate_output_defaults_to_false_when_missing() {
+        let cfg: LLMRefineConfig = serde_json::from_str("{}").expect("parse");
+        assert!(!cfg.translate_output);
     }
 
     /// `refineStyle` / `refineStyleCustom` 宽容加载：非法 id 退 `default`、

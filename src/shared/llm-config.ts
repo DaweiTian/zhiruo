@@ -56,8 +56,8 @@ const DEFAULT_CUSTOM_CONFIG: CustomCompatibleLLMConfig = {
 export const defaultLLMRefineConfig: LLMRefineConfig = {
   enabled: LLM_REFINE.ENABLED,
   provider: LLM_REFINE.PROVIDER,
-  endpoint: LLM_PROVIDERS.DEEPSEEK_ENDPOINT,
-  model: DEFAULT_DEEPSEEK_CONFIG.model,
+  endpoint: DEFAULT_MIMO_CONFIG.endpoint,
+  model: DEFAULT_MIMO_CONFIG.model,
   apiKey: LLM_REFINE.API_KEY,
   translateOutput: LLM_REFINE.TRANSLATE_OUTPUT,
   openai: DEFAULT_OPENAI_CONFIG,

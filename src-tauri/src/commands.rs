@@ -881,7 +881,7 @@ pub(crate) fn session_show_for_feedback<R: tauri::Runtime>(app: &AppHandle<R>) {
 /// "session capsule visible ⇔ a session (or feedback flash) is in flight".
 fn overlay_emit_idle<R: tauri::Runtime>(app: &AppHandle<R>) {
     hide_session(app);
-    let _ = app.emit("overlay-update", serde_json::json!({ "status": "idle" }));
+    crate::events::overlay_update(app, &serde_json::json!({ "status": "idle" }));
 }
 
 /// Show the HUD capsule in its standby state (startup, tray "show").
@@ -959,15 +959,22 @@ fn emit_session_error<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, m
     // ownership: a later middle-button release must not try to stop anything.
     crate::mouse::clear_owned_session();
     if let Ok(mut session) = state.session.lock() {
+        // A cancelled session already settled back to idle on the user's
+        // request: a late failure (in-flight ASR/LLM error after the cancel
+        // button) must not toast or re-enter the state machine.
+        if session.cancelled {
+            log::debug!("session error after cancel, suppressed: {message}");
+            return;
+        }
         session.fail(message.clone());
         // `fail` marks Error; reset to Idle so the next PTT press is accepted
         // and the session is never left in Processing.
         session.status = SessionStatus::Idle;
     }
-    let _ = app.emit("error", serde_json::json!({ "message": message.clone() }));
-    let _ = app.emit(
-        "overlay-update",
-        serde_json::json!({ "status": "error", "message": message }),
+    crate::events::session_error(app, &serde_json::json!({ "message": message.clone() }));
+    crate::events::overlay_update(
+        app,
+        &serde_json::json!({ "status": "error", "message": message }),
     );
     overlay_idle_later(app);
 }
@@ -994,7 +1001,31 @@ async fn wait_for_flush(state: &AppState, timeout_ms: u64) {
 /// step. The session time-limit watchdog compares against it to tell "lost the
 /// race to a normal stop" (stay silent — never emit a bogus "no recording"
 /// toast, mouse.rs rule) from a real failure that must reset the state machine.
+/// Also returned when an in-flight stop finds its session cancelled (or
+/// replaced by a newer one) — same silent handling in
+/// [`stop_session_internal`].
 const ERR_NOT_RECORDING: &str = "当前没有正在进行的录音。";
+
+/// invoke 边界尺寸护栏（字节）：LLM 入参 / 显式复制文本的上限。听写会话
+/// 最长 5 分钟，正常转写远低于此；上限只防异常 / 恶意渲染层把无限负载
+/// 转进付费端点或剪贴板（0.15 审计 MEDIUM）。
+const MAX_LLM_INPUT_BYTES: usize = 64 * 1024;
+
+/// Whether an in-flight stop still owns the session it claimed: the id has not
+/// been replaced by a newer session and the user has not cancelled it. When
+/// this turns false the stop's result must be discarded silently (no inject,
+/// no `complete`, no success events).
+fn session_still_owned<R: tauri::Runtime>(app: &AppHandle<R>, claimed_id: &str) -> bool {
+    app.try_state::<AppState>()
+        .and_then(|state| {
+            state
+                .session
+                .lock()
+                .map(|session| session.id == claimed_id && !session.cancelled)
+                .ok()
+        })
+        .unwrap_or(false)
+}
 
 /// Below this captured-session length (ms), a session that recorded no audio at
 /// all is treated as a mis-tap / quick click and settles silently — no error
@@ -1026,12 +1057,20 @@ fn empty_session_is_quiet(elapsed_ms: u64, has_audio: bool) -> bool {
 ///
 /// Wraps the fallible work so that *every* failure path (empty key, non-2xx
 /// HTTP, empty transcript, no audio) emits an
-/// `error` event, updates the HUD and resets the session state.
+/// `error` event, updates the HUD and resets the session state — except a
+/// lost claim ([`ERR_NOT_RECORDING`]): a losing stop to a concurrent winner
+/// (or one racing a cancel) must stay silent and must NEVER reset the
+/// winner's in-flight state machine (same rule as the watchdog and
+/// mouse.rs's stale middle-button release).
 pub async fn stop_session_internal<R: tauri::Runtime>(
     app: &AppHandle<R>,
 ) -> Result<String, String> {
     match stop_session_inner(app).await {
         Ok(text) => Ok(text),
+        Err(err) if err == ERR_NOT_RECORDING => {
+            log::debug!("stop_session: claim lost or session cancelled, staying silent");
+            Err(err)
+        }
         Err(err) => {
             let state = app.state::<AppState>();
             emit_session_error(app, &state, err.clone());
@@ -1066,11 +1105,8 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
         let session = state.session.lock().map_err(|e| e.to_string())?;
         session.id.clone()
     };
-    let _ = app.emit("stop-recording", session_id.clone());
-    let _ = app.emit(
-        "overlay-update",
-        serde_json::json!({ "status": "processing" }),
-    );
+    crate::events::recorder_event(app, "stop-recording", &session_id);
+    crate::events::overlay_update(app, &serde_json::json!({ "status": "processing" }));
 
     // Wait for the recorder to flush its tail. The worklet flush waits up to
     // 1000ms (AudioRecorder.tsx), so allow a little more but return as soon as
@@ -1128,9 +1164,9 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
                 let on_partial = {
                     let app = app.clone();
                     move |partial: &str| {
-                        let _ = app.emit(
-                            "overlay-update",
-                            serde_json::json!({
+                        crate::events::overlay_update(
+                            &app,
+                            &serde_json::json!({
                                 "status": "processing",
                                 "processingStage": "transcribing",
                                 "transcript": partial,
@@ -1167,6 +1203,11 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
             if empty_session_is_quiet(session_elapsed_ms, false) {
                 {
                     let mut session = state.session.lock().map_err(|e| e.to_string())?;
+                    // Cancelled while the recorder was shutting down: the
+                    // quiet settle must not repaint state over the cancel.
+                    if session.cancelled {
+                        return Err(ERR_NOT_RECORDING.into());
+                    }
                     session.complete(String::new());
                 }
                 overlay_emit_idle(app);
@@ -1210,9 +1251,9 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
 
     // Optional refine / translate via LLM
     if !final_text.trim().is_empty() && config.llm_refine.enabled {
-        let _ = app.emit(
-            "overlay-update",
-            serde_json::json!({
+        crate::events::overlay_update(
+            app,
+            &serde_json::json!({
                 "status": "processing",
                 "processingStage": "refining",
                 "transcript": final_text,
@@ -1231,9 +1272,9 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
     // only refine_text was ever called, so enabling translation alone did
     // nothing. Run the translator on its own (after refine when both are on).
     if !final_text.trim().is_empty() && config.llm_refine.translate_output {
-        let _ = app.emit(
-            "overlay-update",
-            serde_json::json!({
+        crate::events::overlay_update(
+            app,
+            &serde_json::json!({
                 "status": "processing",
                 "processingStage": "translating",
                 "transcript": final_text,
@@ -1254,6 +1295,13 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
         }
     }
 
+    // Commit point: everything after this records history and injects text.
+    // A cancel (or a newer session) that landed while ASR / LLM was in flight
+    // discards the result silently — never inject text the user cancelled.
+    if !session_still_owned(app, &session_id) {
+        return Err(ERR_NOT_RECORDING.into());
+    }
+
     if !final_text.trim().is_empty() {
         // Lifetime stats live in their own store (never pruned, immune to
         // history deletion). Record BEFORE `HistoryManager::add`: on first run
@@ -1269,28 +1317,34 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
         match inject::inject_text_with_mode(&final_text, &inject_mode) {
             Ok(inject::InjectOutcome::Injected) => {}
             Ok(inject::InjectOutcome::Copied) => {
-                let _ = app.emit("inject-fallback", serde_json::json!({ "reason": "copied" }));
+                crate::events::inject_fallback(&app, &serde_json::json!({ "reason": "copied" }));
             }
             Err(e) => {
                 log::warn!("text injection failed: {e}");
-                let _ = app.emit("inject-fallback", serde_json::json!({ "reason": "failed" }));
+                crate::events::inject_fallback(app, &serde_json::json!({ "reason": "failed" }));
             }
         }
     }
 
     {
         let mut session = state.session.lock().map_err(|e| e.to_string())?;
+        // Cancelled right around the injection: skip the success repaint and
+        // the transcription event — the capsule already settled to idle.
+        if session.cancelled || session.id != session_id {
+            log::debug!("stop_session: cancelled after inject, skipping success state");
+            return Ok(final_text);
+        }
         session.complete(final_text.clone());
     }
 
-    let _ = app.emit(
-        "overlay-update",
-        serde_json::json!({
+    crate::events::overlay_update(
+        app,
+        &serde_json::json!({
             "status": "success",
             "transcript": final_text,
         }),
     );
-    let _ = app.emit("transcription", final_text.clone());
+    crate::events::transcription(app, &final_text);
     overlay_idle_later(app);
     Ok(final_text)
 }
@@ -1331,7 +1385,7 @@ pub fn start_session_internal<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<V
     payload.mic_keep_alive = config.asr.mic_keep_alive;
     // asrMode: 'streaming' routes AudioRecorder to PCM worklet (best for cloud ASR).
     payload.asr_mode = "streaming".into();
-    let _ = app.emit("start-recording", &payload);
+    crate::events::recorder_event(app, "start-recording", &payload);
     // Rust-side backstop for the 5-minute session cap (W4): the renderer arms
     // its own `setTimeout` cap too, but a lost renderer timer (or a dead
     // renderer) must never leave a recording running forever — the mouse
@@ -1347,10 +1401,7 @@ pub fn start_session_internal<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<V
     // and never touches the overlay window's geometry (a hold gesture may be
     // live under the user's finger right now).
     session_show(app);
-    let _ = app.emit(
-        "overlay-update",
-        serde_json::json!({ "status": "recording" }),
-    );
+    crate::events::overlay_update(app, &serde_json::json!({ "status": "recording" }));
     serde_json::to_value(&payload).map_err(|e| e.to_string())
 }
 
@@ -1471,15 +1522,15 @@ pub fn set_config(
             }
         }));
         hotkey_rolled_back = true;
-        let _ = app.emit(
-            "error",
-            serde_json::json!({ "message": format!("快捷键不受支持，已恢复为原设置：{err}") }),
+        crate::events::session_error(
+            &app,
+            &serde_json::json!({ "message": format!("快捷键不受支持，已恢复为原设置：{err}") }),
         );
     }
     // 广播配置变更（脱敏）：后台录音窗据此即时启停麦克风保温管线、
     // 跟随麦克风设备切换，不等下一次会话才生效。
     let masked = state.config.load_masked();
-    let _ = app.emit("config-updated", &masked);
+    crate::events::config_updated(&app, &masked);
     Ok(SetConfigResult {
         config: masked,
         hotkey_rolled_back,
@@ -1614,7 +1665,7 @@ pub fn cancel_session(app: AppHandle, state: State<AppState>) -> Result<(), Stri
     crate::mouse::clear_owned_session();
     let mut session = state.session.lock().map_err(|e| e.to_string())?;
     session.cancel();
-    let _ = app.emit("stop-recording", session.id.clone());
+    crate::events::recorder_event(&app, "stop-recording", &session.id);
     drop(session);
     // Cancelled sessions go straight back to standby; the capsule stays up.
     overlay_emit_idle(&app);
@@ -1665,20 +1716,23 @@ pub fn send_streaming_audio_end(
     if !session.finish_streaming(payload) {
         return Err("Rejected streaming end".into());
     }
-    let _ = app.emit("streaming-final", session.id.clone());
+    crate::events::recorder_event(&app, "streaming-final", &session.id);
     Ok(())
 }
 
 #[tauri::command]
 pub fn send_error(app: AppHandle, state: State<AppState>, error: String) -> Result<(), String> {
-    // Same channel shape and reset semantics as other failure paths.
+    // Same channel shape and reset semantics as other failure paths. The
+    // renderer-supplied message is capped (0.15 audit MEDIUM): no unbounded
+    // payload into the log / HUD event channel.
+    let error: String = error.chars().take(1024).collect();
     emit_session_error(&app, &state, error);
     Ok(())
 }
 
 #[tauri::command]
 pub fn send_audio_level(app: AppHandle, level: f32) {
-    let _ = app.emit("audio-level", level);
+    crate::events::audio_level(&app, level);
 }
 
 #[tauri::command]
@@ -2128,6 +2182,10 @@ pub async fn show_settings_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn refine_text(state: State<'_, AppState>, text: String) -> Result<String, String> {
+    // 命令边界不可信：超出上限的负载不进付费 LLM 端点（0.15 审计 MEDIUM）。
+    if text.len() > MAX_LLM_INPUT_BYTES {
+        return Err("文本过长，无法润色。".into());
+    }
     let config = state.config.load();
     llm::refine_text(&text, &config.llm_refine, &config.asr.hotwords).await
 }
@@ -2138,6 +2196,9 @@ pub async fn translate_text(
     text: String,
     target_language: String,
 ) -> Result<String, String> {
+    if text.len() > MAX_LLM_INPUT_BYTES {
+        return Err("文本过长，无法翻译。".into());
+    }
     let config = state.config.load();
     llm::translate_text(&text, &target_language, &config.llm_refine).await
 }
@@ -2182,6 +2243,10 @@ pub async fn run_selection_hub_action(app: AppHandle, action: String) -> Result<
 /// 旧剪贴板（与选区流水线的临时写入语义不同）。
 #[tauri::command]
 pub fn copy_text(text: String) -> Result<(), String> {
+    // 命令边界不可信：与 LLM 入参同一量级的护栏，防无限负载撑爆剪贴板。
+    if text.len() > MAX_LLM_INPUT_BYTES {
+        return Err("文本过长，无法复制。".into());
+    }
     crate::translate::write_clipboard_text(&text)
 }
 
@@ -2234,7 +2299,7 @@ pub async fn picker_insert(app: AppHandle, text: String) -> Result<(), String> {
     match inject::inject_text_with_mode(&text, &inject_mode) {
         Ok(inject::InjectOutcome::Injected) => {}
         Ok(inject::InjectOutcome::Copied) => {
-            let _ = app.emit("inject-fallback", serde_json::json!({ "reason": "copied" }));
+            crate::events::inject_fallback(&app, &serde_json::json!({ "reason": "copied" }));
         }
         Err(e) => {
             // 失败不收起面板（可重试）；日志只记原因，不记内容。
@@ -2285,7 +2350,7 @@ pub fn confirm_snippet_candidate(
 pub fn clear_clipboard_history(app: AppHandle) -> Result<(), String> {
     crate::clipboard::clear()?;
     if crate::picker::is_open() {
-        let _ = app.emit("picker-update", crate::picker::current_payload(None));
+        crate::events::picker_update(&app, &crate::picker::current_payload(None));
     }
     Ok(())
 }
@@ -2296,7 +2361,7 @@ pub fn clear_clipboard_history(app: AppHandle) -> Result<(), String> {
 pub fn delete_clipboard_entry(app: AppHandle, text: String) -> Result<(), String> {
     crate::clipboard::remove_entry(&text)?;
     if crate::picker::is_open() {
-        let _ = app.emit("picker-update", crate::picker::current_payload(None));
+        crate::events::picker_update(&app, &crate::picker::current_payload(None));
     }
     Ok(())
 }
@@ -2335,7 +2400,7 @@ pub fn pin_clipboard_entry(
         log::warn!("pin_clipboard_entry: clipboard remove failed: {e}");
     }
     if crate::picker::is_open() {
-        let _ = app.emit("picker-update", crate::picker::current_payload(None));
+        crate::events::picker_update(&app, &crate::picker::current_payload(None));
     }
     Ok(list)
 }
@@ -2356,7 +2421,7 @@ pub fn remove_user_snippet(
             Ok(())
         })?;
     if crate::picker::is_open() {
-        let _ = app.emit("picker-update", crate::picker::current_payload(None));
+        crate::events::picker_update(&app, &crate::picker::current_payload(None));
     }
     Ok(list)
 }

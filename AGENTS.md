@@ -62,6 +62,12 @@ voicekey/
       asr.rs          Cloud transcription (MiMo / Qwen / Doubao Ark / OpenAI
                       dialects; local SenseVoice / X-ASR were removed in 0.5.11).
       llm.rs          OpenAI-compatible refinement and translation calls.
+      refine_prompt.rs System-prompt builder for refine/polish (glossary,
+                      hotwords, style presets folded into one LLM call).
+      filler.rs       Filler-word cleanup (rules tier / LLM prompt tier).
+      refine_eval.rs  cfg(test) refine-prompt eval dataset + rules tier check.
+      events.rs       Window-targeted event routing (emit_to fan-out per event;
+                      keeps transcripts/clipboard payloads off unused windows).
       inject.rs       Text injection (enigo on Win/mac: clipboard + Ctrl/V;
                       Hyprland: wl-copy + Shift+Insert).
       audio.rs        Audio chunk handling and session audio plumbing.

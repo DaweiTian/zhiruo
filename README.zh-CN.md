@@ -57,27 +57,15 @@
         ↓
 采集麦克风音频
         ↓
-在本机运行语音识别
+把音频发送到用户配置的云端识别服务，返回转写文本
         ↓
 按需使用用户配置的 LLM 服务润色或翻译最终文本
         ↓
 把结果注入当前应用，并保存到本地历史记录
 ```
 
-Electron 主进程统一管理录音会话、模型文件、快捷键、凭据、历史记录、更新和文本注入。
-语音识别在 Worker 线程中运行，避免模型推理阻塞应用界面。
-
-### 识别模式
-
-| 模式         | 本地模型             | 使用体验                                             | 约需下载 |
-| ------------ | -------------------- | ---------------------------------------------------- | -------- |
-| **经典模式** | SenseVoiceSmall int8 | 录音结束后转写，配置更小、更简单                     | 240 MB   |
-| **流式模式** | X-ASR-zh-en 480 ms   | 说话时显示中英实时文字，模型原生输出标点与英文大小写 | 586 MB   |
-
-两种模式互斥。模型仅在用户从设置页主动下载时写入 Electron 的用户数据目录；应用会校验
-固定的文件大小和 SHA-256 哈希。下载流式模型前，芷若会读取当前公网连接的两位国家码，
-但不会存储或记录 IP 地址：中国大陆优先使用 ModelScope，美国及其他海外连接优先使用
-Hugging Face，任一首选源失败时仍会自动尝试另一来源。切换模式不会自动删除已经下载的另一套模型。
+Tauri Rust 主进程（`src-tauri/`）统一管理录音会话、快捷键、凭据、历史记录、统计、更新和
+文本注入。云端识别支持多种方言（MiMo / 通义千问 / 豆包 / OpenAI 兼容接口，可在设置中切换）。
 
 ## 安装
 
@@ -158,8 +146,8 @@ PTT 按下/释放支持；如果没有使用已适配的 Hyprland 集成，请�
 
 - **文本润色**只会把最终识别文本发送给已配置的 LLM 服务，不会发送原始音频。
 - **翻译**会把当前选中的文本发送给该服务，并用返回结果替换选区。
-- **历史记录和模型文件**保存在应用的本地用户数据目录。
-- **API Key** 由 Electron 主进程管理，不会写入应用日志。
+- **历史记录**保存在应用的本地用户数据目录。
+- **API Key** 由 Tauri Rust 主进程管理，不会写入应用日志。
 
 如需完全离线使用，请保持文本润色和翻译功能关闭。
 
@@ -167,9 +155,10 @@ PTT 按下/释放支持；如果没有使用已适配的 Hyprland 集成，请�
 
 ### 环境要求
 
-- [Node.js 20](https://nodejs.org/)
-- npm
-- Electron 原生依赖所需的平台构建工具
+- [Node.js 20](https://nodejs.org/) 与 npm
+- [Rust](https://www.rust-lang.org/tools/install)（`src-tauri/` 的 Tauri 主进程用 Cargo 构建）
+- [Tauri v2 平台前置依赖](https://v2.tauri.app/start/prerequisites/)：Windows 需 WebView2
+  运行时（Windows 11 自带），Linux 需 WebKitGTK 与构建工具，macOS 需 Xcode 命令行工具
 
 ### 开发环境
 
@@ -189,26 +178,24 @@ npm test              # 运行单元测试
 npm run build         # 生产构建与当前平台安装包
 ```
 
-构建产物会写入 `release/<version>/`。项目网站是 `website/` 下独立的 Astro 项目，可使用
-根目录中的 `website:*` npm 脚本进行开发和构建。
+构建产物写入 `src-tauri/target/release/bundle/`；发版安装包按项目约定交付到仓库根
+`dist/`。项目网站是 `website/` 下独立的 Astro 项目，可使用根目录中的 `website:*` npm
+脚本进行开发和构建。
 
 ## 项目结构
 
 ```text
-electron/
-  main/       Electron 生命周期、录音、ASR、快捷键、LLM、历史记录和文本注入
-  preload/    通过 contextBridge 暴露给渲染窗口的类型化 API
-  shared/     跨进程类型、常量、模型元数据与多语言资源
-src/
-  components/ React UI、录音桥接、HUD、图表与通用组件
-  pages/      首页、设置和历史记录页面
-website/      用于 GitHub Pages 的 Astro 项目网站
-public/       桌面渲染进程使用的运行时资源
-build/        安装包图标与打包资源
+src-tauri/    Tauri 2（Rust）主进程：录音、ASR、快捷键、LLM、历史、统计、
+              注入、托盘、更新（见 src-tauri/README.md）
+src/          React 渲染层（Vite）：组件、页面、HUD 窗口、共享类型
+website/      Astro 项目网站，部署在 Cloudflare Workers Static Assets
+public/       桌面渲染层使用的运行时资源
+electron/     遗留 Electron 主进程/preload/shared 代码——仅作功能参考，
+              不参与构建（已被 Tauri 主进程取代）
 ```
 
 各目录内的 README 提供了更详细的职责地图。追踪运行时或界面改动时，可以先阅读
-[`electron/README.md`](electron/README.md) 和 [`src/README.md`](src/README.md)。
+[`src-tauri/README.md`](src-tauri/README.md) 和 [`src/README.md`](src/README.md)。
 
 ## 参与贡献
 
@@ -216,7 +203,8 @@ build/        安装包图标与打包资源
 
 1. 先搜索[现有 Issues](https://github.com/DaweiTian/zhiruo/issues)，或为缺陷和建议创建范围
    清晰的新 Issue。
-2. 把系统权限操作保留在 Electron 主进程，并校验渲染进程传入的 IPC 数据。
+2. 把系统权限操作保留在 Tauri Rust 主进程（`src-tauri/`），并在该边界校验渲染层传入的
+   invoke 数据。
 3. 当行为或模块职责发生实质变化时，同步更新对应目录的 README。
 4. 运行 `npm run quality`，并在 PR 中说明已经验证的平台或运行链路。
 5. 使用 [Conventional Commits](https://www.conventionalcommits.org/) 风格的提交信息。

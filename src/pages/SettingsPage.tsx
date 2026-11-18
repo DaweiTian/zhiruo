@@ -131,7 +131,12 @@ type SaveStatus = {
 } | null
 
 function isAppPreferencesDirty(current: AppConfig['app'], original: AppConfig['app']): boolean {
-  return (current.autoLaunch ?? false) !== (original.autoLaunch ?? false)
+  // language 也在内：`handleAppLanguageChange` 单独保存失败时靠 dirty 让
+  // 自动保存 / 卸载 flush 重试（0.15 审计——此前只看 autoLaunch，失败即失联）。
+  return (
+    (current.autoLaunch ?? false) !== (original.autoLaunch ?? false) ||
+    (current.language ?? 'system') !== (original.language ?? 'system')
+  )
 }
 
 function isAsrConfigDirty(current: AppConfig['asr'], original: AppConfig['asr']): boolean {
@@ -232,6 +237,7 @@ function mergeConfigPatch(config: AppConfig, patch: Partial<AppConfig>): AppConf
     picker: patch.picker
       ? normalizePickerConfig({ ...config.picker, ...patch.picker })
       : config.picker,
+    inject: patch.inject ? { ...config.inject, ...patch.inject } : config.inject,
   }
 }
 
@@ -2530,7 +2536,13 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label htmlFor="targetLanguage">{t('settings.translation.targetLanguage')}</Label>
                 <Select
-                  value={config.translation.targetLanguage}
+                  value={
+                    TARGET_LANGUAGES.some(
+                      (lang) => lang.value === config.translation.targetLanguage,
+                    )
+                      ? config.translation.targetLanguage
+                      : 'english'
+                  }
                   onValueChange={(value) =>
                     setConfig((prev) => ({
                       ...prev,
@@ -2539,7 +2551,7 @@ export default function SettingsPage() {
                   }
                 >
                   <SelectTrigger id="targetLanguage" className="no-drag w-full cursor-pointer">
-                    <SelectValue placeholder="English" />
+                    <SelectValue placeholder={t('settings.translation.languages.english')} />
                   </SelectTrigger>
                   <SelectContent>
                     {TARGET_LANGUAGES.map((lang) => (

@@ -87,6 +87,11 @@ pub const HUB_WINDOW_LABEL: &str = "hub";
 /// (`App.tsx` routes it to the picker panel) rely on this exact string.
 pub const PICKER_WINDOW_LABEL: &str = "picker";
 
+/// Label of the hidden background recorder window (audio capture). Same
+/// rationale as [`OVERLAY_WINDOW_LABEL`]: `tauri.conf.json` and the renderer
+/// (`App.tsx` routes it to `AudioRecorder`) rely on this exact string.
+pub const BACKGROUND_WINDOW_LABEL: &str = "background";
+
 /// How long a hidden main window survives before its WebView process is
 /// destroyed to reclaim memory (the window itself already hid to the tray).
 ///

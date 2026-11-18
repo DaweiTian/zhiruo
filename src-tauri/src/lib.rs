@@ -3,6 +3,7 @@ mod audio;
 mod clipboard;
 mod commands;
 mod config;
+mod events;
 mod filler;
 mod history;
 mod hotkey;

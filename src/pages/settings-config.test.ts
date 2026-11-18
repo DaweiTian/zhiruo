@@ -32,6 +32,8 @@ function createConfig(llmKey: string): AppConfig {
     },
     llmRefine: {
       ...defaultLLMRefineConfig,
+      // 显式 provider，与下面填的 deepseek key 配套——测试不依赖默认 provider
+      provider: 'deepseek',
       deepseek: {
         ...defaultLLMRefineConfig.deepseek,
         apiKey: llmKey,

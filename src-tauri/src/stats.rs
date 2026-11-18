@@ -362,6 +362,10 @@ mod tests {
         assert_eq!(count_characters("hello world"), 10);
         assert_eq!(count_characters(" 你 好\n\t世界 "), 4);
         assert_eq!(count_characters("   \n\t"), 0);
+        // U+0085 (NEL) is Unicode White_Space (stripped); U+FEFF (BOM) is not
+        // (counted). JS `/\s/u` classifies both the opposite way — the TS
+        // mirror must follow THIS rule on both code points.
+        assert_eq!(count_characters("\u{85}a\u{feff}"), 2);
     }
 
     #[test]

@@ -55,15 +55,24 @@ export interface StoredDictationStats {
 }
 
 /**
+ * Unicode **White_Space** 属性白名单，与 Rust `char::is_whitespace` 逐码点
+ * 对齐。JS `/\s/u` 与它恰好差两个码点、分类相反：U+0085（NEL）Rust 算空白
+ * 而 JS 不算、U+FEFF（BOM）JS 算空白而 Rust 不算——统计持久化在 Rust 侧，
+ * 必须以 Rust 为基准（0.15 全库审计 HIGH）。回归锁定见 `stats.test.ts`。
+ */
+const RUST_WHITESPACE =
+  /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u
+
+/**
  * 非空白字符数，按 **Unicode 码点** 计数，与 Rust `src-tauri/src/stats.rs`
  * `count_characters`（`text.chars().filter(|c| !c.is_whitespace()).count()`）逐字对齐：
  * `Array.from` 把字符串拆成码点（emoji 等代理对计 1，而非 UTF-16 码元的 2），
- * 再剔除空白字符。历史字数、图表趋势与 Rust 累计统计共用这一口径，
- * 任何改动必须同步两侧。回归锁定见 `stats.test.ts`（镜像 Rust 单测
- * `count_characters_matches_frontend_whitespace_rule`）。
+ * 再剔除空白字符（`RUST_WHITESPACE`，非 JS `/\s/u`）。历史字数、图表趋势与
+ * Rust 累计统计共用这一口径，任何改动必须同步两侧。回归锁定见 `stats.test.ts`
+ * （镜像 Rust 单测 `count_characters_matches_frontend_whitespace_rule`）。
  */
 export const countCharacters = (text: string): number =>
-  Array.from(text).filter((c) => !/\s/u.test(c)).length
+  Array.from(text).filter((c) => !RUST_WHITESPACE.test(c)).length
 
 const sumValues = (values: number[]): number => values.reduce((total, value) => total + value, 0)
 

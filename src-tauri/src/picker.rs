@@ -24,7 +24,7 @@
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 /// 面板窗口的逻辑尺寸（与 `tauri.conf.json` 的 `picker` 条目一致）。
 pub const PICKER_WINDOW_W: f64 = 320.0;
@@ -144,7 +144,7 @@ pub fn open_picker<R: Runtime>(app: &AppHandle<R>, focus: PickerFocus, cursor: (
     let Some(window) = crate::windowing::ensure_picker_window(app) else {
         log::warn!("picker: picker window unavailable");
         rollback_open(gen);
-        let _ = app.emit("error", json!({ "message": "快速插入面板窗口不可用。" }));
+        crate::events::session_error(app, &json!({ "message": "快速插入面板窗口不可用。" }));
         return;
     };
     let (px, py) = cursor;
@@ -170,7 +170,7 @@ pub fn open_picker<R: Runtime>(app: &AppHandle<R>, focus: PickerFocus, cursor: (
     }
 
     let payload = picker_payload(focus);
-    let _ = app.emit("picker-update", payload);
+    crate::events::picker_update(app, &payload);
 }
 
 /// 打开序列中途失败的回滚：仅当仍是本代时清会话（不误伤后来者）。

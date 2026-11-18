@@ -21,6 +21,9 @@ describe('countCharacters (mirrors Rust count_characters_matches_frontend_whites
     expect(countCharacters('   \n\t')).toBe(0)
     expect(countCharacters('')).toBe(0)
     expect(countCharacters('你好 world')).toBe(7)
+    // U+0085（NEL）按 Rust 口径算空白剔除；U+FEFF（BOM）不算空白、计入。
+    // JS `/\s/u` 对这两个码点的分类恰好相反——必须走 Rust White_Space 白名单。
+    expect(countCharacters('\u0085a\ufeff')).toBe(2)
   })
 
   it('counts each emoji as one Unicode code point, not two UTF-16 units', () => {

@@ -171,7 +171,8 @@ export const LLM_REFINE = {
   MODEL: '',
   API_KEY: '',
   TRANSLATE_OUTPUT: false,
-  PROVIDER: 'deepseek',
+  /** 默认连接与 Rust `LLMRefineConfig::default` 对齐（mimo）——两层默认值必须同侧。 */
+  PROVIDER: 'mimo',
   /** How long a successfully tested LLM connection is trusted without re-testing. */
   CONNECTION_CACHE_TTL_MS: 5 * 60 * 1000,
 } as const

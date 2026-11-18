@@ -416,6 +416,12 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   （`OutsidePress`），worker 上复核 `is_open` 与 root hwnd 后再收起——右键开 hub
   的那次按下发生在开窗之前，天然不误收；hub 窗内背景点击仍归渲染层 `Hub.tsx`。
   非 Windows 为 no-op stub（点外收起仅窗内背景点击生效）。
+- `src/events.rs` - **窗口定向事件路由**（0.15 全库审计）：`app.emit` 广播会把转写全文 /
+  最近剪贴板条目 / 选区预览撒给全部六个窗口，现改为每事件一个 fan-out helper（`emit_to`
+  按窗口分发），事件→窗口映射集中在该模块：`overlay-update` / `audio-level` →
+  overlay + session，`transcription` / `error` → main，`inject-fallback` → overlay，
+  `picker-update` → picker，`hub-update` → hub，录音器控制 / `config-updated` →
+  background；`app-language-changed` 保持广播（各窗换语言，载荷无内容）。
 - `src/translate.rs` - **选区动作编排**（翻译快捷键与选区 hub 共用；移植自遗留 Electron
   蓝本 `electron/main/translation/translator.ts`）：剪贴板快照 → 模拟 Ctrl+C +
   哨兵写入/超时轮询读取判定选区 → LLM 处理（[`SelectionAction`]：翻译 /

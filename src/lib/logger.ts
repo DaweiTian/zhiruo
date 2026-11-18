@@ -92,10 +92,18 @@ export const initRendererLogger = () => {
   }
 
   window.addEventListener('error', (event) => {
-    logWithLevel('error', ['[Renderer] Uncaught error', event.message, event.error ?? ''])
+    // 全局兜底日志只留有限长度的错误摘要：reason/message 可能夹带转写片段
+    // （0.15 审计 LOW），截断到 200 字符即可定位问题。
+    const brief = (value: unknown): string => String(value ?? '').slice(0, 200)
+    logWithLevel('error', [
+      '[Renderer] Uncaught error',
+      brief(event.message),
+      brief(event.error ?? ''),
+    ])
   })
 
   window.addEventListener('unhandledrejection', (event) => {
-    logWithLevel('error', ['[Renderer] Unhandled promise rejection', event.reason ?? ''])
+    const brief = (value: unknown): string => String(value ?? '').slice(0, 200)
+    logWithLevel('error', ['[Renderer] Unhandled promise rejection', brief(event.reason ?? '')])
   })
 }

@@ -60,15 +60,17 @@ pub fn build_glossary_section(glossary_terms: &[String]) -> String {
     }
     let mut section = String::from(
         "Preferred glossary terms:\n\
-         Use them only to correct a close phonetic, spelling, or spacing match supported by nearby\n\
-         context. Never force an uncertain glossary term.\n",
+         These spellings are correct as listed. Keep them exactly whenever they appear (or clearly\n\
+         match by phonetics, spelling, or spacing) — do not \"correct\" them into other common\n\
+         words. Never force an uncertain glossary term onto unrelated text.\n",
     );
     section.push_str(&lines.join("\n"));
     section
 }
 
-/// 热词段落（纠正听错）：与词表段独立并存——词表是「保留原样」，
-/// 热词是「发音相近时纠正为目标写法」。只有存在非空词条时才追加。
+/// 热词段落（纠正听错）：与词表段语义区分——**词表是「保留原样、勿改写」，
+/// 热词是「发音相近时主动纠正为目标写法」**。只有存在非空词条时才追加；
+/// 与词表同名的词条在词表段去重（本段指令更强，出现一处即可）。
 pub fn build_hotword_section(hotwords: &[String]) -> String {
     let mut seen = std::collections::HashSet::new();
     let mut lines: Vec<String> = Vec::new();
@@ -130,10 +132,12 @@ pub fn build_style_section(style_id: &str, custom: &str) -> String {
     format!(
         "Target writing style for this run:\n\
          {target}\n\
-         Restyle the text to match the target style above. You may rephrase wording, reorder\n\
-         sentences, and reshape the form for this purpose. Never add facts not in the text, never\n\
-         change names, numbers, dates, URLs, or quoted text, and keep the original language. When\n\
-         the style conflicts with the output constraints of this prompt, those constraints win."
+         Restyle the text to match the target style above. For this run the \"Minimal edit rules\"\n\
+         limits on rephrasing and word order are relaxed: you may rephrase wording, reorder\n\
+         sentences, and reshape the form to match the style. Entity protection (names, numbers,\n\
+         dates, URLs, quoted text) stays mandatory, never add facts not in the text, and keep the\n\
+         original language. When the style conflicts with the output rules of this prompt, the\n\
+         output rules win."
     )
 }
 
@@ -153,7 +157,19 @@ pub fn build_refine_system_prompt(
         prompt.push_str("\n\n");
         prompt.push_str(FILLER_RULES);
     }
-    let glossary = build_glossary_section(glossary_terms);
+    // 同词条出现在两表时只保留热词段（纠正指令更强），词表段去重——避免
+    // 两段近乎重复的指令（0.15 审计 MEDIUM）。
+    let hotword_terms: std::collections::HashSet<&str> = hotwords
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let glossary_only: Vec<String> = glossary_terms
+        .iter()
+        .filter(|t| !hotword_terms.contains(t.trim()))
+        .cloned()
+        .collect();
+    let glossary = build_glossary_section(&glossary_only);
     if !glossary.is_empty() {
         prompt.push_str("\n\n");
         prompt.push_str(&glossary);
@@ -263,7 +279,7 @@ mod tests {
     #[test]
     fn hotword_section_lists_deduped_terms_and_is_distinct_from_glossary() {
         let prompt = build_refine_system_prompt(
-            &["芷若".to_string()],
+            &["芷若".to_string(), "张伟".to_string()],
             false,
             "default",
             "",
@@ -271,9 +287,11 @@ mod tests {
         );
         assert!(prompt.contains("Hotword corrections (this run):"));
         assert_eq!(prompt.matches("- 文晓").count(), 1);
-        assert!(prompt.contains("- 芷若"));
         assert!(prompt.contains("sounds close to one of the terms"));
         assert!(prompt.contains("Preferred glossary terms:"));
+        // 同词条（芷若）只出现在热词段：词表段保留独有词条（张伟），重复项去重。
+        assert_eq!(prompt.matches("- 芷若").count(), 1);
+        assert!(prompt.contains("- 张伟"));
     }
 
     #[test]

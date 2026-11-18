@@ -8,11 +8,22 @@ use std::time::Duration;
 /// Windows/macOS: clipboard paste (best fidelity for CJK + multiline).
 /// Hyprland: wl-copy --sensitive + Shift+Insert.
 ///
+/// 剥掉绝不能进目标应用的控制字符：C0 里只保留制表 / 换行 / 回车（多行
+/// 转写需要），其余连同 DEL / C1 一并去除——逐字键入到终端时 ESC 序列是
+/// 实打实的注入面（0.15 审计 LOW）。`translate.rs` 写回结果也走这里。
+pub(crate) fn strip_control_chars(text: &str) -> String {
+    text.chars()
+        .filter(|c| matches!(c, '\t' | '\n' | '\r') || !c.is_control())
+        .collect()
+}
+
 /// 注入结果见 [`InjectOutcome`]：`clipboard` 模式与 `auto` 兜底只保证文本
 /// 进剪贴板（调用方发 `inject-fallback` 让 HUD 提示手动粘贴）。**失败契约**：
 /// `Err` 时尽力把文本留在剪贴板（[`copy_to_clipboard_only`]），用户始终可以
 /// 手动粘贴兜底。
 pub fn inject_text_with_mode(text: &str, mode: &str) -> Result<InjectOutcome, String> {
+    let text = strip_control_chars(text);
+    let text = text.as_str();
     if text.trim().is_empty() {
         return Ok(InjectOutcome::Injected);
     }
@@ -196,4 +207,19 @@ pub fn simulate_paste() -> Result<(), String> {
         return chord(Key::Shift, Key::Insert);
     }
     chord(modifier_key(), Key::Unicode('v'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 控制字符剥除：制表 / 换行 / 回车保留，ESC（终端序列引导符）、NUL、
+    /// DEL 与 C1 一律去除——ESC 去掉后序列体只剩字面打印字符，不再构成
+    /// 可执行的终端序列。
+    #[test]
+    fn strip_control_chars_keeps_layout_and_drops_escapes() {
+        assert_eq!(strip_control_chars("a\tb\nc\rd"), "a\tb\nc\rd");
+        assert_eq!(strip_control_chars("x\u{1b}[31my\u{0}z\u{7f}"), "x[31myz");
+        assert_eq!(strip_control_chars("好\u{9b}嗯"), "好嗯");
+    }
 }

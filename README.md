@@ -200,9 +200,11 @@ Leave transcript cleanup and translation disabled to keep only speech recognitio
 
 ### Prerequisites
 
-- [Node.js 20](https://nodejs.org/)
-- npm
-- Platform build tools required by Electron's native dependencies
+- [Node.js 20](https://nodejs.org/) and npm
+- [Rust](https://www.rust-lang.org/tools/install) (the Tauri main process in `src-tauri/` is built with Cargo)
+- Platform prerequisites for [Tauri v2](https://v2.tauri.app/start/prerequisites/): WebView2
+  runtime on Windows (preinstalled on Windows 11), WebKitGTK + build essentials on Linux, Xcode
+  Command Line Tools on macOS
 
 ### Development
 
@@ -219,30 +221,29 @@ Useful commands:
 npm run quality       # lint, formatting, type checks, and tests
 npm run type-check    # TypeScript only
 npm test              # unit tests
+cd src-tauri && cargo test   # Rust unit tests
 npm run build         # production build and platform package
 ```
 
-Packaged artifacts are written to `release/<version>/`. The marketing website is an independent
-Astro project under `website/` and is deployed with Cloudflare Workers Static Assets; use the
-`website:*` npm scripts to work on it.
+Packaged artifacts are written to `src-tauri/target/release/bundle/`; release installers are
+delivered to the repository-root `dist/` (project convention). The marketing website is an
+independent Astro project under `website/` and is deployed with Cloudflare Workers Static Assets;
+use the `website:*` npm scripts to work on it.
 
 ## Project structure
 
 ```text
-electron/
-  main/       Electron lifecycle, audio, ASR, hotkeys, LLM workflows, history, and injection
-  preload/    Typed contextBridge API exposed to renderer windows
-  shared/     Cross-process types, constants, model metadata, and localization
-src/
-  components/ React UI, recorder bridge, HUD, charts, and reusable primitives
-  pages/      Home, Settings, and History screens
+src-tauri/    Tauri 2 (Rust) main process: audio, ASR, hotkeys, LLM workflows,
+              history, stats, injection, tray, updater (see src-tauri/README.md)
+src/          React renderer (Vite): components, pages, HUD windows, shared types
 website/      Astro marketing site deployed with Cloudflare Workers Static Assets
 public/       Runtime assets used by the desktop renderer
-build/        Installer icons and packaging resources
+electron/     Legacy Electron main/preload/shared code — functional reference only,
+              NOT part of the build (the Tauri main process replaced it)
 ```
 
 Directory-level README files provide a more detailed ownership map. Start with
-[`electron/README.md`](electron/README.md) and [`src/README.md`](src/README.md) when tracing a
+[`src-tauri/README.md`](src-tauri/README.md) and [`src/README.md`](src/README.md) when tracing a
 runtime or UI change.
 
 ## Contributing
@@ -251,8 +252,8 @@ Contributions are welcome. Before opening a pull request:
 
 1. Search [existing issues](https://github.com/DaweiTian/zhiruo/issues) or open a focused issue
    for a bug or proposal.
-2. Keep privileged operations in the Electron main process and validate renderer-provided IPC
-   payloads.
+2. Keep privileged operations in the Tauri Rust main process (`src-tauri/`) and validate
+   renderer-provided invoke payloads at that boundary.
 3. Update the relevant directory README when behavior or module ownership changes materially.
 4. Run `npm run quality` and include the platforms or runtime paths you verified in the PR.
 5. Use a [Conventional Commits](https://www.conventionalcommits.org/) style commit message.

@@ -19,13 +19,6 @@
     "core:window:allow-close",
     "core:window:allow-is-maximized",
     "core:event:default",
-    "core:app:default",
-    "clipboard-manager:allow-write-text",
-    "clipboard-manager:allow-read-text",
-    "dialog:default",
-    "global-shortcut:allow-is-registered",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "global-shortcut:allow-unregister-all"
+    "core:app:default"
   ]
 }

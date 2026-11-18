@@ -1,6 +1,7 @@
 use crate::config::{history_file, HISTORY_RETENTION_DAYS};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +36,13 @@ fn now_ms() -> u64 {
 }
 
 pub struct HistoryManager;
+
+/// Process-wide guard for the read-modify-write cycle on the history file.
+/// Mirrors `stats.rs::STATS_LOCK`: `add` / `add_selection_original` / `delete`
+/// / `clear` all do load -> mutate -> save; interleaved they can lose an
+/// update (e.g. a transcription's `add` racing a history-page `delete` —
+/// 0.15 audit MEDIUM). A poisoned mutex is recovered instead of panicking.
+static HISTORY_LOCK: Mutex<()> = Mutex::new(());
 
 impl HistoryManager {
     fn load() -> HistoryStore {
@@ -73,6 +81,7 @@ impl HistoryManager {
     }
 
     pub fn add(text: String, duration_ms: Option<u64>) -> Result<HistoryItem, String> {
+        let _guard = HISTORY_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         let mut store = Self::load();
         let item = HistoryItem {
             id: format!("{}-{}", now_ms(), uuid::Uuid::new_v4().simple()),
@@ -90,6 +99,7 @@ impl HistoryManager {
     /// 选区动作（翻译 / 润色改写）在覆盖选区前，把**原文**存进历史，
     /// 供替换后回溯。带 `source = "selection"` 与语音听写条目区分。
     pub fn add_selection_original(text: String) -> Result<HistoryItem, String> {
+        let _guard = HISTORY_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         let mut store = Self::load();
         let item = HistoryItem {
             id: format!("{}-{}", now_ms(), uuid::Uuid::new_v4().simple()),
@@ -105,6 +115,7 @@ impl HistoryManager {
     }
 
     pub fn delete(id: &str) -> Result<bool, String> {
+        let _guard = HISTORY_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         let mut store = Self::load();
         let before = store.items.len();
         store.items.retain(|i| i.id != id);
@@ -116,6 +127,7 @@ impl HistoryManager {
     }
 
     pub fn clear() -> Result<(), String> {
+        let _guard = HISTORY_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         Self::save(&HistoryStore::default())
     }
 }

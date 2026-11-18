@@ -37,7 +37,7 @@ use crate::windowing::HUB_WINDOW_LABEL;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 /// hub 窗口逻辑尺寸（正方形）：完整圆环 + 解释结果卡片都落在窗口内。
 pub const HUB_WINDOW_SIZE: f64 = 260.0;
@@ -90,7 +90,7 @@ static OPEN_LOCK: Mutex<()> = Mutex::new(());
 
 /// `hub-update` 事件载荷统一出口（hub 窗口渲染层监听）。
 fn emit_hub<R: Runtime>(app: &AppHandle<R>, payload: Value) {
-    let _ = app.emit("hub-update", payload);
+    crate::events::hub_update(app, &payload);
 }
 
 /// 环心偏移（webview CSS px）：渲染层偏移圆环 SVG，把圆环钉在胶囊上。
@@ -243,7 +243,7 @@ pub async fn open_hub<R: Runtime>(
             log::warn!("hub: hub window unavailable");
             drop(_open);
             rollback_open(gen);
-            let _ = app.emit("error", json!({ "message": "快捷动作面板窗口不可用。" }));
+            crate::events::session_error(app, &json!({ "message": "快捷动作面板窗口不可用。" }));
             return;
         }
     };

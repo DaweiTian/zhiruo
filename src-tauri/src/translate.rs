@@ -21,7 +21,7 @@ use crate::{inject, llm, platform};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 const CLIPBOARD_SENTINEL_PREFIX: &str = "voice-key-translation-copy-sentinel";
 /// 等翻译快捷键松开后再发 Ctrl+C，避免松键事件干扰前台应用的选区。
@@ -295,7 +295,7 @@ fn emit_overlay<R: Runtime>(app: &AppHandle<R>, payload: Value) {
     if session_active(app) {
         return;
     }
-    let _ = app.emit("overlay-update", payload);
+    crate::events::overlay_update(app, &payload);
     crate::commands::session_show_for_feedback(app);
 }
 
@@ -342,7 +342,7 @@ pub async fn translate_selection<R: Runtime>(app: &AppHandle<R>) {
         Err(message) => {
             log::warn!("translate: {message}");
             // 设置窗口的 SessionNotifications toast（既有 error 事件契约）。
-            let _ = app.emit("error", json!({ "message": message.clone() }));
+            crate::events::session_error(app, &json!({ "message": message.clone() }));
             // 用户多半正对着别的应用：HUD 胶囊上也要有可见反馈。
             emit_overlay(app, json!({ "status": "error", "message": message }));
             crate::commands::overlay_idle_later(app);
@@ -443,18 +443,21 @@ pub(crate) async fn run_with_text<R: Runtime>(
         }
     }
 
-    // 原文进历史（可回溯）；写失败不阻断输出，只记日志。
-    if let Err(e) = crate::history::HistoryManager::add_selection_original(original.to_string()) {
-        log::warn!("translate: record selection original failed: {e}");
-    }
-
+    // 剥控制字符再写回（ESC 序列逐字键入终端是注入面，0.15 审计）；
     // 结果写入剪贴板（经守卫，Drop 才认得它是我们的残留）→ 模拟粘贴覆盖
     // 选区 → 等 GUI 消费；随后 `guard` 的 Drop 把剪贴板换回原内容（成功路径
     // 同样恢复）。
+    let processed = crate::inject::strip_control_chars(&processed);
     guard.write_owned(&processed)?;
     tokio::time::sleep(Duration::from_millis(CLIPBOARD_WRITE_DELAY_MS)).await;
     inject::simulate_paste().map_err(|e| format!("模拟粘贴按键失败，结果未写回：{e}"))?;
     tokio::time::sleep(Duration::from_millis(GUI_PASTE_SETTLE_DELAY_MS)).await;
+
+    // 原文进历史（可回溯）；**粘贴成功后**再记——写史在前会在 paste 失败时
+    // 留下「已替换」孤条目（0.15 审计 LOW）。写失败不阻断输出，只记日志。
+    if let Err(e) = crate::history::HistoryManager::add_selection_original(original.to_string()) {
+        log::warn!("translate: record selection original failed: {e}");
+    }
 
     log::info!("translate: {action:?} result pasted back into the focused app");
     Ok(processed)

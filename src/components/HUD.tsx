@@ -300,9 +300,12 @@ export function HUD() {
   }, [isVisible, dockEdge, labelText, pushHitRect])
 
   useEffect(() => {
-    // 卸载（overlay webview 销毁）= 胶囊消失：热区清空 → 窗口恒穿透。
+    // 卸载（overlay webview 销毁）= 胶囊消失：热区清空 + 释放交互锁 →
+    // 窗口恒穿透（SessionHUD 同款双清理；漏 grab(false) 会让硬故障重建后的
+    // 整窗卡在可交互态，0.15 审计）。
     return () => {
       window.electronAPI.setOverlayHitRect(null).catch(() => {})
+      window.electronAPI.setOverlayHoverGrab(false).catch(() => {})
     }
   }, [])
 

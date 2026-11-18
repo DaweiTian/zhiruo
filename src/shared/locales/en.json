@@ -49,7 +49,9 @@
     "recent7": "Last 7 days",
     "section": {
       "today": "Today",
-      "total": "All time"
+      "total": "All time",
+      "activity": "Active hours",
+      "badges": "Achievements"
     },
     "greeting": {
       "morning": "Good morning",
@@ -72,7 +74,26 @@
       "activeDays": "Active days",
       "activeDaysHint": "Days you dictated",
       "peakDay": "Peak day",
-      "peakDayValue": "{{date}} · {{value}} chars"
+      "peakDayValue": "{{date}} · {{value}} chars",
+      "streakDays": "Current streak",
+      "streakDaysHint": "Keep the streak alive",
+      "longestStreak": "Longest streak",
+      "longestStreakHint": "Personal best"
+    },
+    "heatmap": {
+      "mostActive": "Most active {{range}} · {{value}} chars",
+      "noActivity": "No activity yet"
+    },
+    "badge": {
+      "progress": "{{unlocked}}/{{total}} unlocked",
+      "first-dictation": "First dictation",
+      "chars-1k": "1K characters",
+      "chars-10k": "10K characters",
+      "chars-100k": "100K characters",
+      "streak-7": "7-day streak",
+      "streak-30": "30-day streak",
+      "day-1k": "1,000 chars in a day",
+      "audio-1h": "1 hour of audio"
     },
     "range": {
       "option_one": "Last day",
@@ -116,7 +137,11 @@
       "title": "Appearance",
       "description": "Theme style, accent color, and overall look",
       "themeStyle": "Theme style",
-      "accentColor": "Accent color"
+      "accentColor": "Accent color",
+      "capsuleSkin": "Capsule skin",
+      "capsuleSkinHint": "Appearance skin for the floating capsule; the leaf sprite reacts to voice states",
+      "capsuleSkinClassic": "Classic",
+      "capsuleSkinPet": "Leaf sprite"
     },
     "connectionTitle": "Connection",
     "aboutHint": "Stay up to date for the best experience",

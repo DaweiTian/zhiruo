@@ -84,9 +84,11 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { useTheme, THEME_OPTIONS } from '@/lib/useTheme'
+import { useCapsuleSkin } from '@/lib/useCapsuleSkin'
 import { validateHotkey } from '@/lib/hotkey-utils'
 import { ChangelogDialog } from '@/components/ChangelogDialog'
 import { AccentSelector } from '@/components/AccentSelector'
+import Pet from '@/components/Pet'
 import {
   applyPersistedHotkeyState,
   applyPersistedSecretState,
@@ -360,6 +362,7 @@ function Segmented({
 export default function SettingsPage() {
   const { t } = useTranslation()
   const { theme, setTheme, accent, setAccent } = useTheme()
+  const { skin: capsuleSkin, setSkin: setCapsuleSkin } = useCapsuleSkin()
   const [config, setConfig] = useState<AppConfig>({
     app: {
       language: 'system',
@@ -1849,6 +1852,51 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label>{t('settings.appearance.accentColor')}</Label>
                 <AccentSelector value={accent} onChange={setAccent} />
+              </div>
+              <div className="space-y-2">
+                <Label>{t('settings.appearance.capsuleSkin')}</Label>
+                <div className="no-drag grid grid-cols-2 gap-2">
+                  {(['classic', 'pet'] as const).map((option) => {
+                    const selected = capsuleSkin === option
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setCapsuleSkin(option)}
+                        aria-pressed={selected}
+                        aria-label={t(
+                          option === 'pet'
+                            ? 'settings.appearance.capsuleSkinPet'
+                            : 'settings.appearance.capsuleSkinClassic',
+                        )}
+                        className={cn(
+                          'cursor-pointer rounded-xl border bg-card p-2 text-left transition-all hover:border-primary/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                          selected ? 'border-primary ring-1 ring-primary' : 'border-border',
+                        )}
+                      >
+                        <div className="mb-1.5 flex h-11 items-center justify-center rounded-lg bg-neutral-950/90">
+                          {option === 'pet' ? (
+                            <Pet state="idle" size={32} />
+                          ) : (
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-neutral-300">
+                              <Mic className="h-3 w-3" />
+                            </span>
+                          )}
+                        </div>
+                        <span className="block truncate text-[12.5px] font-medium text-foreground">
+                          {t(
+                            option === 'pet'
+                              ? 'settings.appearance.capsuleSkinPet'
+                              : 'settings.appearance.capsuleSkinClassic',
+                          )}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {t('settings.appearance.capsuleSkinHint')}
+                </p>
               </div>
             </div>
           </SectionCard>

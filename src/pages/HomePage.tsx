@@ -5,7 +5,14 @@ import { useTranslation } from 'react-i18next'
 import { VoiceWave } from '@/components/VoiceWave'
 import { HotkeyKeys } from '@/components/HotkeyKeys'
 import StatsOverview from '@/components/StatsOverview'
-import { computeStats, type HistoryItem, type StoredDictationStats } from '@/lib/stats'
+import HourHeatmap from '@/components/HourHeatmap'
+import BadgeGrid from '@/components/BadgeGrid'
+import {
+  computeBadges,
+  computeStats,
+  type HistoryItem,
+  type StoredDictationStats,
+} from '@/lib/stats'
 import { useStatFormatters } from '@/lib/useStatFormatters'
 
 // recharts 体量大：拆成独立 chunk，进入视口再加载（功能方案设计 3.3）。
@@ -188,6 +195,7 @@ export default function HomePage() {
   }, [])
 
   const stats = useMemo(() => computeStats(historyItems, storedStats), [historyItems, storedStats])
+  const badges = useMemo(() => computeBadges(stats), [stats])
   const isMac = window.electronAPI.platform === 'darwin'
   const effectivePtt = pttKey || (isMac ? 'Alt' : 'Control+Shift+Space')
 
@@ -288,8 +296,16 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* 活跃时段 + 成就（听写战绩，功能方案设计 4.1） */}
+      <div className="vk-rise mt-7" style={{ animationDelay: '175ms' }}>
+        <HourHeatmap hourly={stats.hourly} />
+      </div>
+      <div className="vk-rise mt-7" style={{ animationDelay: '210ms' }}>
+        <BadgeGrid badges={badges} />
+      </div>
+
       {/* 趋势 */}
-      <div className="vk-rise mt-7 pb-2" style={{ animationDelay: '210ms' }}>
+      <div className="vk-rise mt-7 pb-2" style={{ animationDelay: '245ms' }}>
         <LazyInteractiveCharts historyItems={historyItems} loading={loading} />
       </div>
     </div>

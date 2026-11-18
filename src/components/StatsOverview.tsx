@@ -1,5 +1,5 @@
 import { ReactNode } from 'react'
-import { Type, Volume2, CalendarDays, TrendingUp } from 'lucide-react'
+import { Type, Volume2, CalendarDays, TrendingUp, Flame, Trophy } from 'lucide-react'
 import type { DictationStats } from '@/lib/stats'
 import { useStatFormatters } from '@/lib/useStatFormatters'
 
@@ -40,7 +40,7 @@ export default function StatsOverview({ stats }: StatsOverviewProps) {
   const rangeLabel = t('home.range.label', { count: rangeDays })
 
   return (
-    <section className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border/60 md:grid-cols-4">
+    <section className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border/60 md:grid-cols-3">
       <StatCell
         icon={<Type className="h-3.5 w-3.5" />}
         label={t('home.stats.totalCharacters')}
@@ -83,6 +83,18 @@ export default function StatsOverview({ stats }: StatsOverviewProps) {
               })
             : t('home.summary.noActivity')
         }
+      />
+      <StatCell
+        icon={<Flame className="h-3.5 w-3.5" />}
+        label={t('home.stats.streakDays')}
+        value={formatNumber(stats.streakDays)}
+        sub={t('home.stats.streakDaysHint')}
+      />
+      <StatCell
+        icon={<Trophy className="h-3.5 w-3.5" />}
+        label={t('home.stats.longestStreak')}
+        value={formatNumber(stats.longestStreak)}
+        sub={t('home.stats.longestStreakHint')}
       />
     </section>
   )

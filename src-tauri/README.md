@@ -327,15 +327,24 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
 - `src/stats.rs` - 独立累计统计存储（`voice-key-stats.json`）：识别字符总数 /
   录音总时长 / 按日统计（`sessions` / `characters` / `audioMs`）只增不减，不受
   历史删除与 90 天裁剪影响——Home 的今日与近 N 日窗口也改读它（前端按日历日
-  求和 `daily`），不再随历史缩水。字符口径与 `src/lib/stats.ts::countCharacters`
-  对齐（剔除空白后计数），首次使用时从 **未裁剪**的历史原始条目幂等回填
-  （`backfilled` 一次性标记）。**兼容老文件**：v1 的 `daily` 值是裸字符数，
-  `DayStats` 自定义反序列化同时接受裸数字与当前对象形状，老文件升级时保留字符数
-  （`sessions` / `audioMs` 补 0，此前未记录），绝不因形状不匹配把整文件读成默认
-  值而清空终身统计。读-改-写全程持进程级 `STATS_LOCK`（`get` 的首跑回填与
-  `record_add` 的累加并发时不会丢更新）；`StatsTotals` 带 `#[serde(default)]`，
-  `totals` 缺字段不再导致整文件反序列化失败把终身统计静默重置。`stop_session`
-  里在 `HistoryManager::add` 之前累加（避免首跑回填重复计数），`get_stats`
+  求和 `daily`），不再随历史缩水。**按小时桶（设计 4.1）**：`hourly`
+  （`BTreeMap<u8, u64>`，本地小时 0..23 → 累计字符数）供首页热力图；v3 迁移
+  （`STATS_VERSION` 2→3）加载时从原始历史一次性重建（`backfill_hourly`
+  清空重算防 double-count，version 落 3 后永不再动、历史删除不缩水；历史
+  **写入即裁剪** 90 天，重建窗口止于磁盘上仍留存的条目，此后只增不减）。
+  **听写口径**：`source: "selection"` 的选区动作原文只入史供回溯、从不走
+  `record_add`，两条回填（总量 / 小时桶）都显式跳过，前端回退聚合同步排除。
+  此后 `record_add` 顺带累加；小时口径与 `day_key` 同一本地时区转换。字符
+  口径与 `src/lib/stats.ts::countCharacters` 对齐（剔除空白后计数），首次
+  使用时从原始历史条目幂等回填（`backfilled` 一次性标记）。**兼容老文件**：
+  v1 的 `daily` 值是裸字符数，`DayStats` 自定义反序列化同时接受裸数字与当前
+  对象形状，老文件升级时保留字符数（`sessions` / `audioMs` 补 0，此前未记录），
+  绝不因形状不匹配把整文件读成默认值而清空终身统计；`version` 字段级默认 0
+  （不是当前版本号），缺该字段的手改文件仍会走 v3 迁移而不是永远跳过。
+  读-改-写全程持进程级 `STATS_LOCK`（`get` 的首跑回填与 `record_add` 的累加
+  并发时不会丢更新）；`StatsTotals` 带 `#[serde(default)]`，`totals` 缺字段
+  不再导致整文件反序列化失败把终身统计静默重置。`stop_session` 里在
+  `HistoryManager::add` 之前累加（避免首跑回填重复计数），`get_stats`
   命令返回该结构。
 - `src/hotkey.rs` - 全局快捷键解析/绑定：bare token `AltRight/ControlRight/ShiftRight`
   映射 `Code::AltRight/ControlRight/ShiftRight`（与渲染层 `normalizeKey` 逐字对齐），

@@ -49,7 +49,9 @@
     "recent7": "近 7 天",
     "section": {
       "today": "今日",
-      "total": "累计"
+      "total": "累计",
+      "activity": "活跃时段",
+      "badges": "成就"
     },
     "greeting": {
       "morning": "早上好",
@@ -72,7 +74,26 @@
       "activeDays": "活跃天数",
       "activeDaysHint": "坚持用语音记录",
       "peakDay": "峰值日",
-      "peakDayValue": "{{date}} · {{value}} 字"
+      "peakDayValue": "{{date}} · {{value}} 字",
+      "streakDays": "当前连续",
+      "streakDaysHint": "连续听写不停",
+      "longestStreak": "最长连续",
+      "longestStreakHint": "历史最佳纪录"
+    },
+    "heatmap": {
+      "mostActive": "最活跃 {{range}} · {{value}} 字",
+      "noActivity": "暂无记录"
+    },
+    "badge": {
+      "progress": "已解锁 {{unlocked}}/{{total}}",
+      "first-dictation": "首次听写",
+      "chars-1k": "累计 1 千字",
+      "chars-10k": "累计 1 万字",
+      "chars-100k": "累计 10 万字",
+      "streak-7": "连续 7 天",
+      "streak-30": "连续 30 天",
+      "day-1k": "单日 1000 字",
+      "audio-1h": "音频 1 小时"
     },
     "range": {
       "option_one": "最近 1 天",
@@ -116,7 +137,11 @@
       "title": "外观",
       "description": "界面主题、强调色与整体风格",
       "themeStyle": "界面主题",
-      "accentColor": "强调色"
+      "accentColor": "强调色",
+      "capsuleSkin": "胶囊形象",
+      "capsuleSkinHint": "悬浮胶囊的外观皮肤，叶精灵会跟随语音状态做出反应",
+      "capsuleSkinClassic": "经典",
+      "capsuleSkinPet": "叶精灵"
     },
     "connectionTitle": "连接状态",
     "aboutHint": "保持更新以获得最佳体验",

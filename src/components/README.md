@@ -33,7 +33,7 @@ React 组件目录，包含应用级组件与 `ui/` 组件库。
 
 ### `HUD.tsx`
 
-overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光标所在屏幕的工作区底部居中、任务栏上方约 48px 处；位置可被用户拖拽改变并由 Rust 持久化）。**0.5.6 解耦**：录音 / 处理 / 成功 / 错误的会话态视觉与取消按钮已拆出到独立的 `SessionHUD.tsx`（下方居中的 `session` 窗口）——本组件**只渲染待机（idle）胶囊**，但仍完整订阅 `overlay-update` / `audio-level`：`statusRef` 供状态机裁决点按语义（latch 停止），音频电平供 latched 静音自动停止判定，会话离开录音态时复位 latch 标记。hold 手势在途时待机胶囊**保持原形态、原位不动**（大胶囊在 session 窗下方居中，两窗同显）。**窗口几何恒定**：overlay 窗口常驻 `tauri.conf.json` 的 280×64，**不随状态缩放**——0.5.3 起彻底移除 renderer 的 `setOverlaySize` / 内容测量 / `scheduleOverlayResize` 路径（状态机也不再发出任何 resize 命令），因为「会话 / 手势进行中改变窗口尺寸」会在 WebView2 上打断指针手势（详见下文根因）。待机胶囊**恒为圆形 mic 钮**（平时 36×36、贴边紧凑 32×32，仅麦克风图标、不显示文字标签——用户拍板）居中于窗口、不被裁切。**按下热区挂在胶囊热区盒上**（外层 `fixed inset-0` 容器为 `pointer-events-none`，交互挂在包住胶囊布局盒的**矩形**热区盒 `hitBoxRef`（= 胶囊外接矩形 + 3px padding）上，承载 `pointerdown` / `dblclick`，contextmenu 由 window 级监听统一拦截）——矩形无圆角，胶囊圆角四角的按下仍有效（0.5.1 防回归意图保留）；盒外的窗口空白**不再是热区**，点击 / 滚轮穿透到下层应用。待机胶囊 `<button>` 只作视觉主体。**手势后续（move / up / cancel / blur）一律由 window 级监听器驱动状态机**，容器不再直接承载 `pointerup` / `pointercancel`。鼠标事件语义（0.5.15 hover 穿透，取代旧「整窗恒 `set_ignore_mouse_events(false)`」）：胶囊可见矩形（`getBoundingClientRect`，逻辑 px）经 `setOverlayHitRect` 推给 Rust，`mouse.rs` 的 `WH_MOUSE_LL` 全局钩子做悬停检测（**穿透状态下钩子照样看得见鼠标移动**，旧「穿透后 `mouseenter` 不可达、胶囊会永久点不到」的理由不再成立），矩形外 `set_ignore_cursor_events(true)` 穿透、进入矩形 / 手势交互锁（`setOverlayHoverGrab`，pending / holding / dragging / latched / 录音中锁定不穿透直到状态机回 idle）翻回可交互；ignore 标志由该机制**唯一拥有**，组件不再直接写。贴边贴齐位移（`DOCK_TRANSLATE`）挂在热区盒（而非按钮）上，保证热区测量矩形 == 视觉胶囊外接矩形。胶囊为常驻待机启动器：启动后一直显示；状态机 idle →（session 窗显示会话态）→ 回 idle（会话结束本窗始终待机形态，仅托盘「显示悬浮胶囊」可隐藏本窗）。待机胶囊**不设 `title`**（避免悬停弹出原生 tooltip），仅保留 `aria-label`。**注入回退软提示（0.12）**：订阅 `inject-fallback`（注入只落剪贴板 / 失败时 Rust 发出），胶囊右侧绝对定位的小胶囊条显示「已复制，请手动粘贴 / 注入失败」，4 秒自隐——绝对定位不进 flex 行（窗口中心恒留给待机胶囊，不得被挤偏），`pointer-events-none` 不参与 hover 穿透命中。
+overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光标所在屏幕的工作区底部居中、任务栏上方约 48px 处；位置可被用户拖拽改变并由 Rust 持久化）。**0.5.6 解耦**：录音 / 处理 / 成功 / 错误的会话态视觉与取消按钮已拆出到独立的 `SessionHUD.tsx`（下方居中的 `session` 窗口）——本组件**只渲染待机（idle）胶囊**，但仍完整订阅 `overlay-update` / `audio-level`：`statusRef` 供状态机裁决点按语义（latch 停止），音频电平供 latched 静音自动停止判定，会话离开录音态时复位 latch 标记。hold 手势在途时待机胶囊**保持原形态、原位不动**（大胶囊在 session 窗下方居中，两窗同显）。**窗口几何恒定**：overlay 窗口常驻 `tauri.conf.json` 的 280×64，**不随状态缩放**——0.5.3 起彻底移除 renderer 的 `setOverlaySize` / 内容测量 / `scheduleOverlayResize` 路径（状态机也不再发出任何 resize 命令），因为「会话 / 手势进行中改变窗口尺寸」会在 WebView2 上打断指针手势（详见下文根因）。待机胶囊**恒为圆形 mic 钮**（平时 36×36、贴边紧凑 32×32，仅麦克风图标、不显示文字标签——用户拍板）居中于窗口、不被裁切。**按下热区挂在胶囊热区盒上**（外层 `fixed inset-0` 容器为 `pointer-events-none`，交互挂在包住胶囊布局盒的**矩形**热区盒 `hitBoxRef`（= 胶囊外接矩形 + 3px padding）上，承载 `pointerdown` / `dblclick`，contextmenu 由 window 级监听统一拦截）——矩形无圆角，胶囊圆角四角的按下仍有效（0.5.1 防回归意图保留）；盒外的窗口空白**不再是热区**，点击 / 滚轮穿透到下层应用。待机胶囊 `<button>` 只作视觉主体。**胶囊皮肤（设计 4.2）**：`useCapsuleSkin` 为 `pet` 时按钮图形换用 `Pet` 叶精灵（待机窗恒 idle 态），点击热区 / 过渡 / 按压反馈不变；默认 `classic` 与现状一致。**手势后续（move / up / cancel / blur）一律由 window 级监听器驱动状态机**，容器不再直接承载 `pointerup` / `pointercancel`。鼠标事件语义（0.5.15 hover 穿透，取代旧「整窗恒 `set_ignore_mouse_events(false)`」）：胶囊可见矩形（`getBoundingClientRect`，逻辑 px）经 `setOverlayHitRect` 推给 Rust，`mouse.rs` 的 `WH_MOUSE_LL` 全局钩子做悬停检测（**穿透状态下钩子照样看得见鼠标移动**，旧「穿透后 `mouseenter` 不可达、胶囊会永久点不到」的理由不再成立），矩形外 `set_ignore_cursor_events(true)` 穿透、进入矩形 / 手势交互锁（`setOverlayHoverGrab`，pending / holding / dragging / latched / 录音中锁定不穿透直到状态机回 idle）翻回可交互；ignore 标志由该机制**唯一拥有**，组件不再直接写。贴边贴齐位移（`DOCK_TRANSLATE`）挂在热区盒（而非按钮）上，保证热区测量矩形 == 视觉胶囊外接矩形。胶囊为常驻待机启动器：启动后一直显示；状态机 idle →（session 窗显示会话态）→ 回 idle（会话结束本窗始终待机形态，仅托盘「显示悬浮胶囊」可隐藏本窗）。待机胶囊**不设 `title`**（避免悬停弹出原生 tooltip），仅保留 `aria-label`。**注入回退软提示（0.12）**：订阅 `inject-fallback`（注入只落剪贴板 / 失败时 Rust 发出），胶囊右侧绝对定位的小胶囊条显示「已复制，请手动粘贴 / 注入失败」，4 秒自隐——绝对定位不进 flex 行（窗口中心恒留给待机胶囊，不得被挤偏），`pointer-events-none` 不参与 hover 穿透命中。
 
 **待机态（idle）交互（0.5.3 重设计，用户拍板）**：**恒为圆形 mic 钮**（36×36 仅麦克风图标、不显示「按住说话」文字——用户拍板；**贴边吸附时收缩为 32×32 紧凑圆形（贴齐屏幕边），见下方「贴边紧凑形态」**）。**指针按下不再立即开录**——`pointerdown` 只开始一次「手势」，等手势歧义消除后才决定动作：
 
@@ -68,7 +68,7 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 ### `SessionHUD.tsx`
 
-`session` 窗口（`App.tsx` 按 window label 路由）的**会话态胶囊**：0.5.6 与 overlay 待机胶囊解耦，固定渲染在屏幕下方居中的独立透明窗口里。承载录音（268×52 深色玻璃胶囊：琥珀麦克风呼吸圆章 + 无流式文本时的迷你波形 / 流式文本单行截断 + 尾部弱化 + 流光光标）、处理（阶段色转圈圆章：转写 / 精修 / 翻译）、成功（绿勾 + 转写预览）、错误（红叉 + 错误文案）与取消按钮。视觉 / 交互与拆分前 overlay 会话态胶囊基本一致，并补了内容层动效：session 窗 show 时大胶囊从 `opacity-0 scale-[0.93] translate-y-1.5` 淡入 / 微升（200ms、约 75ms 延迟起步，幅度被 280×64 窗口余量钳制），`recording` / `processing` / `success` / `error` 状态圆章切换时统一套用 `hud-pop` 弹性出现，与成功 / 错误态原有动画保持家族一致。
+`session` 窗口（`App.tsx` 按 window label 路由）的**会话态胶囊**：0.5.6 与 overlay 待机胶囊解耦，固定渲染在屏幕下方居中的独立透明窗口里。承载录音（268×52 深色玻璃胶囊：琥珀麦克风呼吸圆章 + 无流式文本时的迷你波形 / 流式文本单行截断 + 尾部弱化 + 流光光标）、处理（阶段色转圈圆章：转写 / 精修 / 翻译）、成功（绿勾 + 转写预览）、错误（红叉 + 错误文案）与取消按钮。**胶囊皮肤（设计 4.2）**：`useCapsuleSkin` 为 `pet` 时 `Pet` 叶精灵顶替状态圆章（≤40×40 防挤压文字），单行文字 / 波形 / 取消钮不动；`audio-level` 电平写入 `--pet-level` 驱动张嘴。视觉 / 交互与拆分前 overlay 会话态胶囊基本一致，并补了内容层动效：session 窗 show 时大胶囊从 `opacity-0 scale-[0.93] translate-y-1.5` 淡入 / 微升（200ms、约 75ms 延迟起步，幅度被 280×64 窗口余量钳制），`recording` / `processing` / `success` / `error` 状态圆章切换时统一套用 `hud-pop` 弹性出现，与成功 / 错误态原有动画保持家族一致。
 
 窗口生命周期权威在 Rust：`commands::session_show` 在每次会话启动时（键盘 PTT / 鼠标中键 / hold / latch 皆经 `start_session_internal`）把本窗定位到**光标所在监视器工作区底部居中**并显示（与 overlay 显隐、拖拽位置完全无关）；回到 idle（成功 / 错误展示 1.2s 超时、取消、误触静默）由 `commands::overlay_emit_idle` 唯一收口隐藏。翻译快捷键的成败反馈也点亮本窗（`translate.rs::emit_overlay` → `session_show_for_feedback`），会话进行中自动跳过（不重锚定）。事件与 overlay 同源：`app.emit` 广播的 `overlay-update` / `audio-level` 各窗各听。本组件**只渲染、不开关窗口**：收到 `idle` 渲染 `null`（隐藏前最后一帧透明无闪烁）。托盘「显示 / 隐藏悬浮胶囊」只作用于 overlay，绝不隐藏本窗；hold 手势在途时两窗同显（手指下待机胶囊不动，大胶囊下方居中）。
 
@@ -77,6 +77,10 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 点击不抢焦点依赖 Rust 侧 `WS_EX_NOACTIVATE` 硬化（见 `src-tauri/README.md`）。
 
 **hover 穿透（0.5.15，与 HUD 同机制）**：本窗同为 280×64 透明窗，根容器 `pointer-events-none`，胶囊（268×52 居中）可见矩形经 `setOverlayHitRect` 推给 Rust——矩形外的点击 / 滚轮穿透到下层应用；`idle` 渲染 `null` 时推 `null`（恒穿透）。录音 / 处理中 `setOverlayHoverGrab(true)` 锁定交互（取消按钮必须 100% 可点，不赌 hover 翻转时序），成功 / 错误展示无按钮、交给 hover 判定。
+
+### `Pet.tsx`
+
+胶囊宠物「叶精灵」（设计 4.2）：内联 SVG + CSS 类切换的共享形象组件，零图片素材，待机窗与会话窗共用避免两套漂移。五态映射 `OverlayStatus`（idle 呼吸眨眼 / recording 眼睛睁大、张嘴幅度由 CSS 变量 `--pet-level` 跟电平 / processing 摇摆 + 思考点 / success 雀跃 / error 耷拉轻抖），processing 三档（transcribing / refining / translating）只由胶囊文案区分。动画只用 transform / opacity（常驻悬浮窗不触发重排），`prefers-reduced-motion` 降级为静态形象（`index.css` 的 pet-\* keyframes）。皮肤由 `lib/useCapsuleSkin.ts` 决定（默认经典款零变化）。
 
 ### `SessionNotifications.tsx`
 
@@ -120,7 +124,15 @@ overlay 窗口的待机胶囊（无边框透明窗口，由主进程定位到光
 
 ### `StatsOverview.tsx`
 
-主页累计数据条（识别字符总数 / 录音总时长 / 活跃天数 / 峰值日）：单面板四格、`gap-px` 发丝线分隔，与首页仪表台风格一致。接收 `HomePage` 合并后的 `DictationStats`（累计字段来自 Rust 独立统计存储 `get_stats`，历史删除不清零）。
+主页累计数据条（识别字符总数 / 录音总时长 / 活跃天数 / 峰值日 / 当前连续 / 最长连续，设计 4.1 扩到六格）：单面板 `gap-px` 发丝线分隔，与首页仪表台风格一致。接收 `HomePage` 合并后的 `DictationStats`（累计字段来自 Rust 独立统计存储 `get_stats`，历史删除不清零）。
+
+### `HourHeatmap.tsx`
+
+按小时活跃度热力图（设计 4.1）：24 格纯 div 网格（无 recharts），底色五档色阶按字符数强度，标注最活跃时段与峰值；数据是 `DictationStats['hourly']`（本地小时 0..23 的 24 桶）。
+
+### `BadgeGrid.tsx`
+
+听写成就徽章（设计 4.1）：`lib/stats.ts::DICTATION_BADGE_IDS` 全集两态（已点亮 / 未点亮），由 `computeBadges` 纯推导（累计字数 / 连续天数 / 单日峰值 / 累计音频），头部显示解锁进度；图标 lucide 内联，未点亮态降透明度。
 
 ### `InteractiveCharts.tsx`
 

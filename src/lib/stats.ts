@@ -8,6 +8,7 @@ export interface HistoryItem {
 }
 
 export interface DictationStats {
+  totalSessions: number
   totalCharacters: number
   totalAudioMs: number
   recentCharacters: number
@@ -18,6 +19,12 @@ export interface DictationStats {
   activeDays: number
   peakDayCharacters: number
   peakDayKey: string | null
+  /** 当前连续天数（今天有听写则含今天；今天还没有则从昨天起算；都没有 = 0） */
+  streakDays: number
+  /** 历史最长连续天数（断签重起） */
+  longestStreak: number
+  /** 本地小时 0..23 -> 累计识别字符数（长度恒为 24，热力图输入） */
+  hourly: number[]
 }
 
 /**
@@ -43,6 +50,8 @@ export interface StoredDictationStats {
   }
   /** 本地日键 `YYYY-MM-DD` -> 当日统计（次数 / 字符数 / 音频毫秒） */
   daily: Record<string, StoredDayStats>
+  /** 本地小时键 `"0".."23"` -> 累计字符数（v3 迁移后恒有；serde BTreeMap<u8,_> 的键是字符串） */
+  hourly: Record<string, number>
 }
 
 /**
@@ -84,6 +93,75 @@ function derivePeak(daily: Map<string, number> | Record<string, number>): {
   return { peakDayCharacters, peakDayKey }
 }
 
+/** `YYYY-MM-DD` -> 自 Unix 纪元起的「日序号」（UTC 零点整除，不受夏令时影响）。 */
+function dayKeyToIndex(key: string): number {
+  const [y, m, d] = key.split('-').map(Number)
+  return Date.UTC(y, m - 1, d) / 86_400_000
+}
+
+/**
+ * 连续天数（current / longest）。活跃日集合取 `daily` 日期键（缺失时由历史聚合），
+ * 相邻日序号差 1 即连续。当前连续：今天有活动从今天往回数；今天还没有、昨天有
+ * （GitHub 贡献条口径）从昨天往回数；都没有 = 0。非法日键（解析不出整数日序号）
+ * 直接丢弃，不参与任何 run。
+ */
+function deriveStreaks(
+  dailyKeys: Iterable<string>,
+  now: Date,
+): {
+  streakDays: number
+  longestStreak: number
+} {
+  const indices = [...new Set([...dailyKeys].map(dayKeyToIndex))]
+    .filter(Number.isInteger)
+    .sort((a, b) => a - b)
+  if (indices.length === 0) return { streakDays: 0, longestStreak: 0 }
+  let longestStreak = 1
+  let run = 1
+  for (let i = 1; i < indices.length; i += 1) {
+    run = indices[i] - indices[i - 1] === 1 ? run + 1 : 1
+    if (run > longestStreak) longestStreak = run
+  }
+  const active = new Set(indices)
+  const todayIndex = dayKeyToIndex(buildDateKey(now))
+  let anchor = active.has(todayIndex)
+    ? todayIndex
+    : active.has(todayIndex - 1)
+      ? todayIndex - 1
+      : -1
+  let streakDays = 0
+  while (anchor >= 0 && active.has(anchor)) {
+    streakDays += 1
+    anchor -= 1
+  }
+  return { streakDays, longestStreak }
+}
+
+/**
+ * 本地小时 0..23 的 24 桶字符数。`stored` 存在时**权威**（空桶就是 0，不回退
+ * 历史——否则删除历史会缩水热力图）；仅 `stored` 整体缺失时由历史实时聚合
+ * （入参须已是听写项）。键严格 `0`.."23"` 十进制（拒绝 `1e1`/`0x2` 等 Number
+ * 可解析的旁路），值要求有限非负。
+ */
+function deriveHourly(historyItems: HistoryItem[], stored?: StoredDictationStats | null): number[] {
+  const hourly = new Array<number>(24).fill(0)
+  if (stored) {
+    for (const [key, value] of Object.entries(stored.hourly ?? {})) {
+      if (!/^\d{1,2}$/.test(key)) continue
+      const hour = Number(key)
+      if (hour <= 23 && Number.isFinite(value) && value >= 0) {
+        hourly[hour] += value
+      }
+    }
+    return hourly
+  }
+  historyItems.forEach((item) => {
+    const hour = new Date(item.timestamp).getHours()
+    hourly[hour] += countCharacters(item.text)
+  })
+  return hourly
+}
+
 /**
  * 近 `rangeDays` 个**日历日**（含今天）的窗口求和，按本地 dayKey 逐日取
  * `stored.daily`。持久化日粒度只到「天」，无法还原历史聚合原来的滑动毫秒窗，
@@ -121,13 +199,18 @@ export function computeStats(
   stored?: StoredDictationStats | null,
   rangeDays = 7,
 ): DictationStats {
-  const historyTotalCharacters = sumValues(historyItems.map((item) => countCharacters(item.text)))
-  const historyTotalAudioMs = sumValues(historyItems.map((item) => item.duration ?? 0))
+  // 统计口径 = 语音听写：选区动作原文（source: "selection"）只入史供回溯，
+  // 从不走 Rust `record_add`，回退聚合必须同步排除（与 Rust 回填过滤一致）。
+  const dictationItems = historyItems.filter(
+    (item) => item.source === undefined || item.source === null,
+  )
+  const historyTotalCharacters = sumValues(dictationItems.map((item) => countCharacters(item.text)))
+  const historyTotalAudioMs = sumValues(dictationItems.map((item) => item.duration ?? 0))
 
   const now = new Date()
   // 回退口径（仅 stored 缺失时使用）：滑动毫秒窗 + 当日时间戳过滤。
   const cutoff = new Date(now.getTime() - rangeDays * 24 * 60 * 60 * 1000)
-  const recentItems = historyItems.filter((item) => item.timestamp >= cutoff.getTime())
+  const recentItems = dictationItems.filter((item) => item.timestamp >= cutoff.getTime())
   const todayStart = new Date(
     now.getFullYear(),
     now.getMonth(),
@@ -146,12 +229,12 @@ export function computeStats(
     59,
     999,
   ).getTime()
-  const todayItems = historyItems.filter(
+  const todayItems = dictationItems.filter(
     (item) => item.timestamp >= todayStart && item.timestamp <= todayEnd,
   )
 
   const historyDailyMap = new Map<string, number>()
-  historyItems.forEach((item) => {
+  dictationItems.forEach((item) => {
     const key = buildDateKey(new Date(item.timestamp))
     historyDailyMap.set(key, (historyDailyMap.get(key) ?? 0) + countCharacters(item.text))
   })
@@ -164,8 +247,13 @@ export function computeStats(
       )
     : historyDailyMap
   const { peakDayCharacters, peakDayKey } = derivePeak(dailyCharsForPeak)
+  const { streakDays, longestStreak } = deriveStreaks(
+    stored ? Object.keys(stored.daily) : historyDailyMap.keys(),
+    now,
+  )
 
   return {
+    totalSessions: stored ? stored.totals.sessions : dictationItems.length,
     totalCharacters: stored ? stored.totals.characters : historyTotalCharacters,
     totalAudioMs: stored ? stored.totals.audioMs : historyTotalAudioMs,
     recentCharacters: storedRecent
@@ -184,5 +272,38 @@ export function computeStats(
     activeDays: stored ? Object.keys(stored.daily).length : historyDailyMap.size,
     peakDayCharacters,
     peakDayKey,
+    streakDays,
+    longestStreak,
+    hourly: deriveHourly(dictationItems, stored),
+  }
+}
+
+/** 成就徽章清单（id 稳定，文案在 i18n `home.badge*`；可逐步扩，勿改已有 id）。 */
+export const DICTATION_BADGE_IDS = [
+  'first-dictation',
+  'chars-1k',
+  'chars-10k',
+  'chars-100k',
+  'streak-7',
+  'streak-30',
+  'day-1k',
+  'audio-1h',
+] as const
+export type DictationBadgeId = (typeof DICTATION_BADGE_IDS)[number]
+
+/**
+ * 纯前端推导徽章点亮态（[`DICTATION_BADGE_IDS`] 全集两态）。
+ * 由累计 / 峰值日 / 最长连续推导，无独立存储。
+ */
+export function computeBadges(stats: DictationStats): Record<DictationBadgeId, boolean> {
+  return {
+    'first-dictation': stats.totalSessions > 0,
+    'chars-1k': stats.totalCharacters >= 1_000,
+    'chars-10k': stats.totalCharacters >= 10_000,
+    'chars-100k': stats.totalCharacters >= 100_000,
+    'streak-7': stats.longestStreak >= 7,
+    'streak-30': stats.longestStreak >= 30,
+    'day-1k': stats.peakDayCharacters >= 1_000,
+    'audio-1h': stats.totalAudioMs >= 3_600_000,
   }
 }

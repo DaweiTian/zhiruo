@@ -6,6 +6,16 @@
 //! Each `daily` entry keeps sessions / characters / audio per local day; the
 //! frontend sums the last N day keys for its "recent" window instead of
 //! re-aggregating (deletable) history. Trend charts still read history directly.
+//! `hourly` keeps characters per local hour-of-day (24 buckets) for the
+//! activity heatmap. DICTATION ONLY: history items with `source: "selection"`
+//! (selection-action originals) are never counted here — backfills filter them
+//! to match the live `record_add` path.
+//!
+//! Backfill window caveat: history pruning runs on WRITE (`HistoryManager::
+//! add`), so `load_raw()` can only ever return items still inside
+//! `HISTORY_RETENTION_DAYS`. Both backfills therefore re-seed from at most the
+//! retained window; the store's "never shrinks afterwards" guarantee starts
+//! once seeded.
 //!
 //! Character counting MUST stay aligned with the frontend
 //! `src/lib/stats.ts` `countCharacters`: strip every whitespace char, then
@@ -13,7 +23,7 @@
 
 use crate::config::stats_file;
 use crate::history::{HistoryItem, HistoryManager};
-use chrono::{Local, TimeZone};
+use chrono::{Local, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,7 +31,7 @@ use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const STATS_VERSION: u32 = 2;
+const STATS_VERSION: u32 = 3;
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -89,7 +99,11 @@ impl<'de> Deserialize<'de> for DayStats {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StatsStore {
-    /// Schema version of the stats file.
+    /// Schema version of the stats file. Field-level default is `0` (not
+    /// [`STATS_VERSION`]) so a hand-edited / truncated file with the field
+    /// stripped still takes the pre-v3 migration path instead of silently
+    /// skipping it forever; fresh in-memory stores use [`StatsStore::default`].
+    #[serde(default = "default_stats_version")]
     pub version: u32,
     /// One-shot flag: lifetime totals were seeded from the raw history file.
     /// Once true, history deletion / 90-day pruning can never change totals.
@@ -100,6 +114,16 @@ pub struct StatsStore {
     /// oldest -> newest, so the frontend (and the peak tie-break below) sees a
     /// deterministic, chronologically sorted map.
     pub daily: BTreeMap<String, DayStats>,
+    /// Local hour-of-day `0..=23` -> lifetime characters recognized in that
+    /// hour (heatmap input). Absent hours simply have no count; BTreeMap keeps
+    /// the JSON ordered 0 -> 23.
+    pub hourly: BTreeMap<u8, u64>,
+}
+
+/// serde fallback for a MISSING `version` field (container `default` would
+/// otherwise take [`StatsStore::default`] and stamp the current version).
+fn default_stats_version() -> u32 {
+    0
 }
 
 impl Default for StatsStore {
@@ -109,6 +133,7 @@ impl Default for StatsStore {
             backfilled: false,
             totals: StatsTotals::default(),
             daily: BTreeMap::new(),
+            hourly: BTreeMap::new(),
         }
     }
 }
@@ -134,6 +159,17 @@ fn day_key(timestamp: u64) -> String {
         .single()
         .unwrap_or_else(Local::now);
     dt.format("%Y-%m-%d").to_string()
+}
+
+/// Local hour-of-day `0..=23` for an epoch-ms timestamp, from the SAME local
+/// conversion as [`day_key`] so heatmap buckets and day buckets never disagree
+/// around midnight.
+fn hour_of(timestamp: u64) -> u8 {
+    let dt = Local
+        .timestamp_millis_opt(timestamp as i64)
+        .single()
+        .unwrap_or_else(Local::now);
+    dt.hour() as u8
 }
 
 pub struct StatsManager;
@@ -174,11 +210,16 @@ impl StatsManager {
         day.sessions += 1;
         day.characters += chars;
         day.audio_ms += audio_ms;
+        *store.hourly.entry(hour_of(timestamp)).or_default() += chars;
     }
 
     /// One-shot seeding from the RAW history items (pass `HistoryManager::
-    /// load_raw()`, which unlike `get_all()` does NOT apply the 90-day prune),
-    /// so entries past the retention window still count toward lifetime totals.
+    /// load_raw()`, which unlike `get_all()` does NOT apply a read-time prune;
+    /// contents are still bounded by the write-time 90-day prune, see the
+    /// module header), so entries past the retention window still count when
+    /// they are on disk. Selection-action originals (`source: "selection"`)
+    /// are skipped — they enter history for undo/traceability but never pass
+    /// through `record_add`, and the backfill must not inflate dictation stats.
     ///
     /// Idempotent: returns `false` and changes nothing once `backfilled` is
     /// true; returns `true` when it actually seeded (caller should persist).
@@ -187,15 +228,47 @@ impl StatsManager {
             return false;
         }
         for item in items {
+            if item.source.is_some() {
+                continue;
+            }
             Self::accumulate(store, &item.text, item.duration, item.timestamp);
         }
         store.backfilled = true;
         true
     }
 
+    /// One-shot migration for pre-v3 files: rebuild the `hourly` heatmap
+    /// buckets from the RAW history items (see [`backfill_from_history`] for
+    /// the retention-window caveat and the selection-item filter). Runs AFTER
+    /// [`backfill_from_history`]: that path also folds hourly through
+    /// `accumulate`, so this must CLEAR and re-fold rather than add, or a
+    /// not-yet-backfilled v2 file would double-count. Returns `true` when it
+    /// migrated (caller should persist).
+    ///
+    /// Idempotent: once `version` reaches [`STATS_VERSION`] it never touches
+    /// the buckets again, so history deletion / pruning afterwards cannot wipe
+    /// them (the remaining timestamps would rebuild a smaller heatmap).
+    pub fn backfill_hourly(store: &mut StatsStore, items: &[HistoryItem]) -> bool {
+        if store.version >= STATS_VERSION {
+            return false;
+        }
+        store.hourly.clear();
+        for item in items {
+            if item.source.is_some() {
+                continue;
+            }
+            *store.hourly.entry(hour_of(item.timestamp)).or_default() +=
+                count_characters(&item.text);
+        }
+        store.version = STATS_VERSION;
+        true
+    }
+
     fn load_or_backfill_from(path: &Path, raw_items: &[HistoryItem]) -> StatsStore {
         let mut store = Self::load_from(path);
-        if Self::backfill_from_history(&mut store, raw_items) {
+        let mut dirty = Self::backfill_from_history(&mut store, raw_items);
+        dirty |= Self::backfill_hourly(&mut store, raw_items);
+        if dirty {
             if let Err(e) = Self::save_to(path, &store) {
                 log::warn!("stats backfill save failed: {e}");
             }
@@ -271,6 +344,16 @@ mod tests {
             text: text.into(),
             duration,
             source: None,
+        }
+    }
+
+    fn selection_item(id: &str, timestamp: u64, text: &str) -> HistoryItem {
+        HistoryItem {
+            id: id.into(),
+            timestamp,
+            text: text.into(),
+            duration: None,
+            source: Some("selection".into()),
         }
     }
 
@@ -426,5 +509,156 @@ mod tests {
         assert!(day.get("characters").is_some());
         assert!(day.get("audioMs").is_some());
         assert!(day.get("audio_ms").is_none());
+    }
+
+    #[test]
+    fn record_add_accumulates_hourly_bucket() {
+        let path = temp_path("hourly-accumulate");
+        let ts = now_ms();
+        let earlier = ts.saturating_sub(3 * 60 * 60 * 1000); // 3h apart: always a different hour-of-day
+        StatsManager::record_add_at_in(&path, &[], "你好 world", Some(1500), earlier)
+            .expect("first record");
+        StatsManager::record_add_at_in(&path, &[], "ab c", Some(500), ts).expect("second record");
+        let store = StatsManager::load_from(&path);
+        let early_hour = hour_of(earlier);
+        let late_hour = hour_of(ts);
+        assert_ne!(early_hour, late_hour);
+        assert_eq!(
+            store.hourly.get(&early_hour).copied().unwrap_or(0),
+            count_characters("你好 world")
+        );
+        assert_eq!(
+            store.hourly.get(&late_hour).copied().unwrap_or(0),
+            count_characters("ab c")
+        );
+        let total: u64 = store.hourly.values().sum();
+        assert_eq!(
+            total,
+            count_characters("你好 world") + count_characters("ab c")
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn stats_v2_file_backfills_hourly_from_history() {
+        let path = temp_path("v2-migration");
+        // A typical v2 file: backfilled lifetime totals, no `hourly` field.
+        let legacy = r#"{
+            "version": 2,
+            "backfilled": true,
+            "totals": { "sessions": 1, "characters": 4, "audioMs": 0 },
+            "daily": { "2024-01-01": { "sessions": 1, "characters": 4, "audioMs": 0 } }
+        }"#;
+        fs::write(&path, legacy).expect("write v2 stats");
+        let items = vec![
+            item("1", 1_700_000_000_000, "abcd", Some(1000)),
+            item("2", 1_700_000_000_000 - 3 * 60 * 60 * 1000, "ef", None),
+        ];
+        let store = StatsManager::load_or_backfill_from(&path, &items);
+        assert_eq!(store.version, STATS_VERSION);
+        let early_hour = hour_of(items[1].timestamp);
+        let late_hour = hour_of(items[0].timestamp);
+        assert_ne!(early_hour, late_hour);
+        assert_eq!(store.hourly.get(&late_hour).copied().unwrap_or(0), 4);
+        assert_eq!(store.hourly.get(&early_hour).copied().unwrap_or(0), 2);
+        // Migration must not touch the lifetime totals.
+        assert_eq!(store.totals.sessions, 1);
+        assert_eq!(store.totals.characters, 4);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn v2_not_backfilled_does_not_double_count_hourly() {
+        let path = temp_path("v2-not-backfilled");
+        // v2 but the one-shot totals backfill never ran (hourly starts empty,
+        // then `backfill_from_history` folds it through `accumulate`). The
+        // hourly migration must CLEAR and re-fold, never add on top.
+        let legacy = r#"{
+            "version": 2,
+            "backfilled": false,
+            "totals": { "sessions": 0, "characters": 0, "audioMs": 0 },
+            "daily": {}
+        }"#;
+        fs::write(&path, legacy).expect("write v2 stats");
+        let items = vec![item("1", 1_700_000_000_000, "abcd", Some(1000))];
+        let store = StatsManager::load_or_backfill_from(&path, &items);
+        let hour = hour_of(items[0].timestamp);
+        assert_eq!(store.hourly.get(&hour).copied().unwrap_or(0), 4);
+        let total: u64 = store.hourly.values().sum();
+        assert_eq!(total, 4);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn hourly_backfill_is_idempotent() {
+        let path = temp_path("hourly-idempotent");
+        let legacy = r#"{
+            "version": 2,
+            "backfilled": true,
+            "totals": { "sessions": 1, "characters": 4, "audioMs": 0 },
+            "daily": { "2024-01-01": { "sessions": 1, "characters": 4, "audioMs": 0 } }
+        }"#;
+        fs::write(&path, legacy).expect("write v2 stats");
+        let items = vec![item("1", 1_700_000_000_000, "abcd", Some(1000))];
+        let migrated = StatsManager::load_or_backfill_from(&path, &items);
+        assert_eq!(migrated.version, STATS_VERSION);
+        let snapshot = fs::read_to_string(&path).expect("read stats");
+
+        // Same items again: version is current, nothing may change.
+        let again = StatsManager::load_or_backfill_from(&path, &items);
+        assert_eq!(again.hourly, migrated.hourly);
+        assert_eq!(fs::read_to_string(&path).expect("read stats"), snapshot);
+
+        // Later history deletion/pruning must NOT rebuild (and wipe) the
+        // buckets: the migration is one-shot by version, not per load.
+        let after_clear = StatsManager::load_or_backfill_from(&path, &[]);
+        assert_eq!(after_clear.hourly, migrated.hourly);
+        assert_eq!(fs::read_to_string(&path).expect("read stats"), snapshot);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn backfill_skips_selection_originals() {
+        // 选区动作原文（source: "selection"）只入史供回溯，从不走 record_add；
+        // 总量与小时桶回填都必须跳过，否则迁移把非听写字符算进「识别字符」。
+        let items = vec![
+            item("1", 1_700_000_000_000, "dictated", Some(100)),
+            selection_item("2", 1_700_000_000_000, "被替换的选区原文"),
+        ];
+        let mut store = StatsStore::default();
+        assert!(StatsManager::backfill_from_history(&mut store, &items));
+        assert_eq!(store.totals.sessions, 1);
+        assert_eq!(store.totals.characters, count_characters("dictated"));
+        let total: u64 = store.hourly.values().sum();
+        assert_eq!(total, count_characters("dictated"));
+
+        // 小时桶迁移同样过滤（v2 文件路径）。
+        let mut v2 = StatsStore {
+            version: 2,
+            backfilled: true,
+            ..StatsStore::default()
+        };
+        assert!(StatsManager::backfill_hourly(&mut v2, &items));
+        let total: u64 = v2.hourly.values().sum();
+        assert_eq!(total, count_characters("dictated"));
+    }
+
+    #[test]
+    fn missing_version_field_triggers_hourly_migration() {
+        let path = temp_path("missing-version");
+        // 字段级 serde default = 0：缺 version 的文件必须走 v2 迁移路径，
+        // 而不是被容器 default 盖成当前版本永远跳过。
+        let legacy = r#"{
+            "backfilled": true,
+            "totals": { "sessions": 1, "characters": 4, "audioMs": 0 },
+            "daily": { "2024-01-01": { "sessions": 1, "characters": 4, "audioMs": 0 } }
+        }"#;
+        fs::write(&path, legacy).expect("write versionless stats");
+        let items = vec![item("1", 1_700_000_000_000, "abcd", Some(1000))];
+        let store = StatsManager::load_or_backfill_from(&path, &items);
+        assert_eq!(store.version, STATS_VERSION);
+        let hour = hour_of(items[0].timestamp);
+        assert_eq!(store.hourly.get(&hour).copied().unwrap_or(0), 4);
+        let _ = fs::remove_file(&path);
     }
 }

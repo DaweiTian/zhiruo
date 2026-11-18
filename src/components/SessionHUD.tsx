@@ -3,7 +3,9 @@ import { AudioLines, Check, Globe, Mic, Sparkles, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { OverlayProcessingStage, OverlayState } from '@/shared/types'
 import { toOverlayHitRect } from '../lib/overlayDrag'
+import { useCapsuleSkin } from '../lib/useCapsuleSkin'
 import { cn } from '../lib/utils'
+import Pet from './Pet'
 import { Waveform } from './Waveform'
 
 /**
@@ -128,6 +130,7 @@ function ErrorBadge() {
 
 export function SessionHUD() {
   const { t } = useTranslation()
+  const { skin } = useCapsuleSkin()
   const [overlayState, setOverlayState] = useState<OverlayState>({ status: 'idle' })
   const [audioLevel, setAudioLevel] = useState(0)
   /** 会话胶囊 ref：hover 穿透热区（`set_overlay_hit_rect`）的测量来源。 */
@@ -238,12 +241,19 @@ export function SessionHUD() {
             'hud-enter',
           )}
         >
-          {/* Left status badge —— key={status} 触发每次状态变化重新挂载并播放 hud-pop */}
+          {/* Left status badge —— key={status} 触发每次状态变化重新挂载并播放 hud-pop。
+              叶精灵皮肤：pet 顶替状态圆章（≤40×40，防挤压单行文字）；文字/波形/取消钮不动。 */}
           <span key={status} className="inline-flex hud-pop">
-            {status === 'recording' && <RecordingBadge audioLevel={audioLevel} />}
-            {status === 'processing' && <ProcessingBadge stage={processingStage} />}
-            {status === 'success' && <SuccessBadge />}
-            {status === 'error' && <ErrorBadge />}
+            {skin === 'pet' ? (
+              <Pet state={status} audioLevel={audioLevel} size={36} />
+            ) : (
+              <>
+                {status === 'recording' && <RecordingBadge audioLevel={audioLevel} />}
+                {status === 'processing' && <ProcessingBadge stage={processingStage} />}
+                {status === 'success' && <SuccessBadge />}
+                {status === 'error' && <ErrorBadge />}
+              </>
+            )}
           </span>
 
           {/* Single-line status text */}

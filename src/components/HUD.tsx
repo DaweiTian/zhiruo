@@ -11,6 +11,8 @@ import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { Mic } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { OverlayEdge, OverlayState, OverlayStatus } from '@/shared/types'
+import { useCapsuleSkin } from '../lib/useCapsuleSkin'
+import Pet from './Pet'
 import { cn } from '../lib/utils'
 import {
   DOCK_TRANSLATE,
@@ -38,6 +40,7 @@ import {
 
 export function HUD() {
   const { t } = useTranslation()
+  const { skin } = useCapsuleSkin()
   /** 胶囊文案：既是可访问名称 / 显示文本，也是热区测量的重推依赖（随语言变化宽度变）。 */
   const labelText = t('hud.holdToTalk')
   const [overlayState, setOverlayState] = useState<OverlayState>({ status: 'idle' })
@@ -752,9 +755,15 @@ export function HUD() {
             )}
             aria-label={labelText}
           >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-neutral-300">
-              <Mic className="h-3 w-3" />
-            </span>
+            {skin === 'pet' ? (
+              // 叶精灵皮肤：顶替 Mic 图形（热区 / 过渡 / 按压反馈不变）；
+              // 待机窗恒为 idle 态，会话五态在 SessionHUD。
+              <Pet state="idle" size={docked ? 20 : 24} />
+            ) : (
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-neutral-300">
+                <Mic className="h-3 w-3" />
+              </span>
+            )}
           </button>
         </div>
       </div>

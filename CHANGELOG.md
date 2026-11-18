@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.13.0](https://github.com/DaweiTian/zhiruo/compare/v0.12.0...v0.13.0) (2026-11-18)
+
+### Features
+
+- **refine:** 风格预设（功能方案设计 3.1）——口述整理 / 选区润色改写按指定文体产出：默认（最小修改）/ 正式邮件 / 小红书 / 周报 / 极简要点 / 商务书面语 / 自定义（≤500 字，带码点计数），预设文案归 Rust、提示词不散落渲染层；只改表达方式，实体保护与输出约束仍优先，翻译 / 解释不受影响；**默认档不产出风格段，输出与历史逐字一致**
+- **asr:** 自定义热词表（功能方案设计 3.2）——`asr.hotwords`（100 条 × 64 字），双通道：`chat_openai_audio` 方言转写指令追加写法提示（ASR 侧）+ 精炼 prompt 热词纠正段（全方言通用），与用户词表「保留原样」独立并存；设置页帮助文案写明局限（整理工关闭 / 数据 URL 方言无 ASR 侧通道，尽力而为非强保证）
+- **history:** 历史页虚拟滚动（功能方案设计 3.3）——手写窗口化 `lib/useVirtualList`（扁平行模型 + 估高 + ResizeObserver 测量修正 + 视口之上行 scrollTop 锚定补偿），万条历史 DOM 节点数稳定、快速滚动流畅；首页趋势图 `InteractiveCharts` 改 lazy + 进视口加载，recharts 拆出独立 chunk（约 386 KB）降首屏脚本量
+
+### Notes
+
+- 三个新配置字段均字段级宽容加载（`de_lenient_*`）：手改坏值退默认，不拖垮整份配置（API key 等不受牵连）；自动保存触发门与 patch 均已接新字段
+- 独立审查修复：虚拟滚动 offsets memo 补测量版本依赖（实测高度进布局）、自定义风格超限字数提示、历史页组间距等价平移、测量缓存裁剪、ResizeObserver 首挂补观察
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.12.0](https://github.com/DaweiTian/zhiruo/compare/v0.11.0...v0.12.0) (2026-11-17)
 
 ### Features

@@ -283,6 +283,13 @@ pub struct ASRConfig {
     /// Request dialect: `chat_asr_data_url` | `chat_openai_audio` | `openai_transcribe`.
     #[serde(default = "default_cloud_dialect")]
     pub cloud_dialect: String,
+    /// 自定义热词表（人名/术语正词，功能方案设计 3.2）。双通道：ASR 侧指令
+    /// 提示（仅 `chat_openai_audio` 方言）+ 精炼 prompt 热词纠正段。加载走
+    /// [`de_lenient_hotwords`]：手改出坏条目逐条丢弃而不是整份配置失败
+    /// （[`de_lenient_user_snippets`] 同一理由）。invoke 边界严格校验在
+    /// [`normalize_hotwords`]。
+    #[serde(default, deserialize_with = "de_lenient_hotwords")]
+    pub hotwords: Vec<String>,
 }
 
 fn default_cloud_asr_model() -> String {
@@ -313,6 +320,7 @@ impl Default for ASRConfig {
             cloud_model: default_cloud_asr_model(),
             cloud_preset: default_cloud_preset(),
             cloud_dialect: default_cloud_dialect(),
+            hotwords: Vec::new(),
         }
     }
 }
@@ -367,6 +375,19 @@ pub struct LLMRefineConfig {
     /// 口水词清理档位："off" | "rules" | "llm"。非法/缺失值按 "off"。
     #[serde(default)]
     pub filler_cleanup: String,
+    /// 风格预设 id（功能方案设计 3.1）：`default` | `email` | `xiaohongshu` |
+    /// `weekly` | `brief` | `english-business` | `custom`。风格只改表达方式，
+    /// 作用于口述整理工与选区润色改写，翻译/解释不受影响。加载走
+    /// [`de_lenient_refine_style`]（非法值退 `default`，不产出风格段）；
+    /// invoke 边界走 [`normalize_refine_style`]（非法保留旧值）。
+    #[serde(
+        default = "default_refine_style",
+        deserialize_with = "de_lenient_refine_style"
+    )]
+    pub refine_style: String,
+    /// 选 `custom` 时的自定义风格描述（上限 500 字）。加载/合并均夹取到 500。
+    #[serde(default, deserialize_with = "de_lenient_refine_style_custom")]
+    pub refine_style_custom: String,
 }
 
 impl Default for LLMRefineConfig {
@@ -390,8 +411,68 @@ impl Default for LLMRefineConfig {
             custom: ProviderKeyConfig::default(),
             user_glossary: Vec::new(),
             filler_cleanup: "off".into(),
+            refine_style: default_refine_style(),
+            refine_style_custom: String::new(),
         }
     }
+}
+
+fn default_refine_style() -> String {
+    "default".into()
+}
+
+/// `refineStyle` 的宽容加载：仅接受 7 个字面量，其余（含非字符串）退回
+/// [`default_refine_style`]。[`de_lenient_clipboard_limit`] 同一理由：手改
+/// 配置不能拖垮整份配置。invoke 边界走 [`normalize_refine_style`]。
+fn de_lenient_refine_style<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(normalize_refine_style(value.as_str().unwrap_or("")).unwrap_or_else(default_refine_style))
+}
+
+/// `refineStyleCustom` 的宽容加载：非字符串退空（视同未配置自定义风格），
+/// 正文夹取到 500 字符（[`de_lenient_clipboard_limit`] 同一理由）。
+fn de_lenient_refine_style_custom<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        Some(s) => s.trim().chars().take(500).collect(),
+        None => String::new(),
+    })
+}
+
+/// `hotwords` 的宽容加载：形状非法整体退空表；非法条目（非字符串 / 超 64
+/// 字符）逐条丢弃、重复与空串清洗、超 100 条截断（[`de_lenient_user_snippets`]
+/// 同一理由）。invoke 边界严格版在 [`normalize_hotwords`]。
+fn de_lenient_hotwords<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(items) = value.as_array() else {
+        return Ok(Vec::new());
+    };
+    let mut terms: Vec<String> = Vec::new();
+    for item in items {
+        let Some(s) = item.as_str() else {
+            continue;
+        };
+        let trimmed = s.trim();
+        if trimmed.is_empty() || trimmed.chars().count() > 64 {
+            continue;
+        }
+        if !terms.iter().any(|t| t == trimmed) {
+            terms.push(trimmed.to_string());
+            if terms.len() >= 100 {
+                break;
+            }
+        }
+    }
+    Ok(terms)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -842,6 +923,47 @@ pub fn normalize_filler_cleanup(raw: &str) -> Option<String> {
     }
 }
 
+/// 风格预设 id：仅接受 7 个字面量；其余返回 `None`（调用方保留旧值，
+/// 与 [`normalize_filler_cleanup`] 同一策略）。
+pub fn normalize_refine_style(raw: &str) -> Option<String> {
+    match raw {
+        "default" | "email" | "xiaohongshu" | "weekly" | "brief" | "english-business"
+        | "custom" => Some(raw.to_string()),
+        _ => None,
+    }
+}
+
+/// invoke 边界校验热词表（`asr.hotwords`）：形状非法/超限报错，空串与重复
+/// 静默清洗。上限 100 条 × 64 字符（与 [`normalize_user_glossary`] 同一纪律）。
+pub fn normalize_hotwords(raw: Option<&serde_json::Value>) -> Result<Vec<String>, String> {
+    let Some(value) = raw else {
+        return Ok(Vec::new());
+    };
+    let items = value
+        .as_array()
+        .ok_or_else(|| "asr.hotwords must be an array of strings".to_string())?;
+    let mut terms: Vec<String> = Vec::new();
+    for item in items {
+        let s = item
+            .as_str()
+            .ok_or_else(|| "asr.hotwords must contain only strings".to_string())?;
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.chars().count() > 64 {
+            return Err("asr.hotwords entries must be at most 64 characters".into());
+        }
+        if !terms.iter().any(|t| t == trimmed) {
+            terms.push(trimmed.to_string());
+        }
+    }
+    if terms.len() > 100 {
+        return Err("asr.hotwords supports at most 100 entries".into());
+    }
+    Ok(terms)
+}
+
 /// 侧键落点动作：仅接受 `snippets` / `clipboard` / `both` / `hub`；其余返回
 /// `None`（调用方保留旧值，与 [`normalize_filler_cleanup`] 同一策略）。
 pub fn normalize_snippet_action(raw: &str) -> Option<String> {
@@ -1077,6 +1199,11 @@ impl ConfigStore {
                         merged.asr.cloud_dialect = v.to_string();
                     }
                 }
+                if let Some(v) = obj.get("hotwords") {
+                    if !v.is_null() {
+                        merged.asr.hotwords = normalize_hotwords(Some(v))?;
+                    }
+                }
             }
         }
 
@@ -1160,6 +1287,14 @@ impl ConfigStore {
                     if !v.is_null() {
                         next.user_glossary = normalize_user_glossary(Some(v))?;
                     }
+                }
+                if let Some(v) = obj.get("refineStyle").and_then(|v| v.as_str()) {
+                    if let Some(valid) = normalize_refine_style(v) {
+                        next.refine_style = valid;
+                    }
+                }
+                if let Some(v) = obj.get("refineStyleCustom").and_then(|v| v.as_str()) {
+                    next.refine_style_custom = v.trim().chars().take(500).collect();
                 }
             }
 
@@ -1298,6 +1433,39 @@ mod tests {
         assert_eq!(normalize_filler_cleanup("rules").as_deref(), Some("rules"));
         assert_eq!(normalize_filler_cleanup("llm").as_deref(), Some("llm"));
         assert_eq!(normalize_filler_cleanup("drop-everything"), None);
+    }
+
+    #[test]
+    fn normalize_refine_style_accepts_only_known_presets() {
+        for id in [
+            "default",
+            "email",
+            "xiaohongshu",
+            "weekly",
+            "brief",
+            "english-business",
+            "custom",
+        ] {
+            assert_eq!(normalize_refine_style(id).as_deref(), Some(id));
+        }
+        assert_eq!(normalize_refine_style("Email"), None);
+        assert_eq!(normalize_refine_style(""), None);
+        assert_eq!(normalize_refine_style("drop-everything"), None);
+    }
+
+    #[test]
+    fn normalize_hotwords_trims_dedupes_and_rejects_malformed() {
+        let raw = serde_json::json!([" 芷若 ", "芷若", "", "Zhiruo"]);
+        assert_eq!(
+            normalize_hotwords(Some(&raw)).unwrap(),
+            vec!["芷若".to_string(), "Zhiruo".to_string()]
+        );
+        assert_eq!(normalize_hotwords(None).unwrap(), Vec::<String>::new());
+        assert!(normalize_hotwords(Some(&serde_json::json!([42]))).is_err());
+        assert!(normalize_hotwords(Some(&serde_json::json!("芷若"))).is_err());
+        assert!(normalize_hotwords(Some(&serde_json::json!(["x".repeat(65)]))).is_err());
+        let many: Vec<String> = (0..120).map(|i| format!("h{i}")).collect();
+        assert!(normalize_hotwords(Some(&serde_json::json!(many))).is_err());
     }
 
     #[test]
@@ -1544,6 +1712,83 @@ mod tests {
         // 超 100 条截断到 100。
         let many = (0..120).map(|i| format!("\"s{i}\"")).collect::<Vec<_>>().join(",");
         assert_eq!(parse(&format!(r#"{{"userSnippets":[{many}]}}"#)).user_snippets.len(), 100);
+    }
+
+    /// `refineStyle` / `refineStyleCustom` 宽容加载：非法 id 退 `default`、
+    /// 自定义描述夹取 500 字、非字符串退空——手改配置不能拖垮整份配置
+    /// （同 `clipboardLimit` 理由）。
+    #[test]
+    fn refine_style_fields_deserialize_leniently() {
+        let parse = |raw: &str| -> LLMRefineConfig {
+            serde_json::from_str(raw).expect("lenient llmRefine config must deserialize")
+        };
+        assert_eq!(parse(r#"{"refineStyle":"weekly"}"#).refine_style, "weekly");
+        assert_eq!(parse(r#"{"refineStyle":"bogus"}"#).refine_style, "default");
+        assert_eq!(parse(r#"{"refineStyle":42}"#).refine_style, "default");
+        assert_eq!(parse(r#"{}"#).refine_style, "default");
+        let over: String = "长".repeat(600);
+        let parsed = parse(&format!(r#"{{"refineStyleCustom":"{over}"}}"#));
+        assert_eq!(parsed.refine_style_custom.chars().count(), 500);
+        assert_eq!(parse(r#"{"refineStyleCustom":42}"#).refine_style_custom, "");
+    }
+
+    /// `hotwords` 宽容加载：坏条目逐条丢弃、超限截断（同 `userSnippets` 理由）。
+    #[test]
+    fn hotwords_deserialize_leniently() {
+        let parse = |raw: &str| -> ASRConfig {
+            serde_json::from_str(raw).expect("lenient asr config must deserialize")
+        };
+        assert_eq!(
+            parse(r#"{"hotwords":[" 芷若 ","芷若","",42]}"#).hotwords,
+            vec!["芷若".to_string()]
+        );
+        assert_eq!(parse(r#"{"hotwords":42}"#).hotwords, Vec::<String>::new());
+        let over: String = "x".repeat(65);
+        assert_eq!(
+            parse(&format!(r#"{{"hotwords":["{over}","好嘞"]}}"#)).hotwords,
+            vec!["好嘞".to_string()]
+        );
+        let many = (0..120)
+            .map(|i| format!("\"h{i}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(
+            parse(&format!(r#"{{"hotwords":[{many}]}}"#)).hotwords.len(),
+            100
+        );
+    }
+
+    /// 风格与热词的合并语义：非法 id 保留旧值，自定义描述夹取 500 字，
+    /// 热词整表替换（与 userGlossary 同一语义），未提及的字段不动。
+    #[test]
+    fn refine_style_and_hotwords_merge() {
+        let root = temp_root("style-hotwords-merge");
+        let store = ConfigStore {
+            path: root.join("voice-key-config.json"),
+        };
+        let merged = store
+            .merge(&serde_json::json!({
+                "llmRefine": { "refineStyle": "email", "refineStyleCustom": "  邮件口吻  " },
+                "asr": { "hotwords": ["芷若", "Zhiruo"] }
+            }))
+            .unwrap();
+        assert_eq!(merged.llm_refine.refine_style, "email");
+        assert_eq!(merged.llm_refine.refine_style_custom, "邮件口吻");
+        assert_eq!(
+            merged.asr.hotwords,
+            vec!["芷若".to_string(), "Zhiruo".to_string()]
+        );
+
+        // 非法 id 保留旧值；未提及的字段保留已存值。
+        let merged = store
+            .merge(&serde_json::json!({ "llmRefine": { "refineStyle": "bogus" } }))
+            .unwrap();
+        assert_eq!(merged.llm_refine.refine_style, "email");
+        assert_eq!(merged.llm_refine.refine_style_custom, "邮件口吻");
+        assert_eq!(
+            merged.asr.hotwords,
+            vec!["芷若".to_string(), "Zhiruo".to_string()]
+        );
     }
 
     /// 麦克风保温开关：默认开启，micKeepAlive 补丁可关可开，未提及该字段的

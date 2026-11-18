@@ -194,6 +194,8 @@ export function normalizeRendererConfig(loadedConfig: AppConfig): AppConfig {
       microphoneDeviceLabel: loadedConfig.asr?.microphoneDeviceLabel ?? '',
       cloudPreset: loadedConfig.asr?.cloudPreset || DEFAULT_CLOUD_PRESET,
       cloudDialect: loadedConfig.asr?.cloudDialect || DEFAULT_CLOUD_DIALECT,
+      // 热词表清洗与 `llmRefine.userGlossary` 同一纪律（trim / 去重 / 100 条 × 64 字）。
+      hotwords: normalizeUserGlossary(loadedConfig.asr?.hotwords ?? []),
     },
     llmRefine: normalizeLLMRefineConfig(loadedConfig.llmRefine),
     translation: {

@@ -44,9 +44,13 @@ import {
   defaultLLMRefineConfig,
   normalizeFillerCleanup,
   normalizeLLMRefineConfig,
+  normalizeRefineStyle,
+  normalizeRefineStyleCustom,
   normalizeUserGlossary,
   resolveLLMConnection,
+  MAX_REFINE_STYLE_CUSTOM_LENGTH,
   MAX_SNIPPET_LENGTH,
+  REFINE_STYLES,
 } from '@/shared/llm-config'
 import type {
   AppConfig,
@@ -58,6 +62,7 @@ import type {
   LinuxIntegrationStatus,
   PickerConfig,
   PickerFocusAction,
+  RefineStyle,
   StorageStatus,
   TranslationConfig,
   UpdateInfo,
@@ -140,7 +145,8 @@ function isAsrConfigDirty(current: AppConfig['asr'], original: AppConfig['asr'])
     (current.cloudModel ?? '') !== (original.cloudModel ?? '') ||
     // A stored key is masked as the placeholder in both snapshots, so equal placeholders mean the
     // key was left untouched; any other difference (including clearing or a new key) is a change.
-    (current.cloudApiKey ?? '') !== (original.cloudApiKey ?? '')
+    (current.cloudApiKey ?? '') !== (original.cloudApiKey ?? '') ||
+    JSON.stringify(current.hotwords ?? []) !== JSON.stringify(original.hotwords ?? [])
   )
 }
 
@@ -1084,6 +1090,58 @@ export default function SettingsPage() {
     }))
   }
 
+  // ---- 风格预设（3.1）--------------------------------------------------
+  const [refineStyleCustomDraft, setRefineStyleCustomDraft] = useState('')
+
+  useEffect(() => {
+    if (isConfigLoading) return
+    setRefineStyleCustomDraft(normalizedLLMRefineConfig.refineStyleCustom)
+    // 只在配置加载完成后同步一次草稿，避免打字被归一化回写打断。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConfigLoading])
+
+  const handleRefineStyleChange = (value: RefineStyle) => {
+    setConfig((prev) => ({
+      ...prev,
+      llmRefine: normalizeLLMRefineConfig({
+        ...prev.llmRefine,
+        refineStyle: normalizeRefineStyle(value),
+      }),
+    }))
+  }
+
+  const handleRefineStyleCustomChange = (raw: string) => {
+    setRefineStyleCustomDraft(raw)
+    setConfig((prev) => ({
+      ...prev,
+      llmRefine: normalizeLLMRefineConfig({
+        ...prev.llmRefine,
+        refineStyleCustom: normalizeRefineStyleCustom(raw),
+      }),
+    }))
+  }
+
+  // ---- 自定义热词表（3.2）----------------------------------------------
+  const [hotwordsDraft, setHotwordsDraft] = useState('')
+
+  useEffect(() => {
+    if (isConfigLoading) return
+    setHotwordsDraft((config.asr.hotwords ?? []).join('\n'))
+    // 只在配置加载完成后同步一次草稿，避免打字被归一化回写打断。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConfigLoading])
+
+  const handleHotwordsChange = (raw: string) => {
+    setHotwordsDraft(raw)
+    setConfig((prev) => ({
+      ...prev,
+      asr: {
+        ...prev.asr,
+        hotwords: normalizeUserGlossary(raw.split('\n')),
+      },
+    }))
+  }
+
   // ---- 快速插入面板（鼠标侧键）-------------------------------------------
   const [userSnippetsDraft, setUserSnippetsDraft] = useState('')
   const [snippetCandidates, setSnippetCandidates] = useState<string[]>([])
@@ -2018,6 +2076,19 @@ export default function SettingsPage() {
                 }
               />
             </div>
+
+            <div className="mt-4 space-y-2 border-t pt-4">
+              <Label htmlFor="hotwords">{t('settings.hotwords')}</Label>
+              <Textarea
+                id="hotwords"
+                className="no-drag min-h-24 font-mono text-xs"
+                placeholder={t('settings.hotwordsPlaceholder')}
+                value={hotwordsDraft}
+                onChange={(event) => handleHotwordsChange(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">{t('settings.hotwordsHelp')}</p>
+              <p className="text-xs text-muted-foreground">{t('settings.hotwordsLimitHint')}</p>
+            </div>
           </SectionCard>
 
           {/* 润色与翻译 */}
@@ -2356,6 +2427,48 @@ export default function SettingsPage() {
                   onChange={(event) => handleUserGlossaryChange(event.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">{t('settings.userGlossaryHelp')}</p>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <Label htmlFor="refineStyle">{t('settings.refineStyle')}</Label>
+                <Select
+                  value={normalizedLLMRefineConfig.refineStyle}
+                  onValueChange={(value) => handleRefineStyleChange(value as RefineStyle)}
+                >
+                  <SelectTrigger id="refineStyle" className="no-drag w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REFINE_STYLES.map((style) => (
+                      <SelectItem key={style} value={style}>
+                        {t(`settings.refineStyleOption.${style}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{t('settings.refineStyleHelp')}</p>
+                {normalizedLLMRefineConfig.refineStyle === 'custom' ? (
+                  <>
+                    <Textarea
+                      id="refineStyleCustom"
+                      className="no-drag min-h-20 font-mono text-xs"
+                      placeholder={t('settings.refineStyleCustomPlaceholder')}
+                      value={refineStyleCustomDraft}
+                      onChange={(event) => handleRefineStyleCustomChange(event.target.value)}
+                    />
+                    <p
+                      className={cn(
+                        'tnum text-right text-[11px]',
+                        // 码点口径与落盘一致（500 字截断不落盘，计数实时提示）。
+                        [...refineStyleCustomDraft].length > MAX_REFINE_STYLE_CUSTOM_LENGTH
+                          ? 'text-destructive'
+                          : 'text-muted-foreground',
+                      )}
+                    >
+                      {[...refineStyleCustomDraft].length} / {MAX_REFINE_STYLE_CUSTOM_LENGTH}
+                    </p>
+                  </>
+                ) : null}
               </div>
             </div>
 

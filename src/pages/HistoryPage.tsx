@@ -14,6 +14,7 @@ import {
 import { HISTORY_RETENTION_DAYS } from '@/shared/constants'
 import { getLocale } from '@/shared/i18n'
 import { cn } from '@/lib/utils'
+import { useVirtualList } from '@/lib/useVirtualList'
 import { VoiceWave } from '@/components/VoiceWave'
 import { countCharacters, type HistoryItem } from '@/lib/stats'
 
@@ -23,34 +24,16 @@ interface DayGroup {
   items: HistoryItem[]
 }
 
-interface VisibleDayGroup extends DayGroup {
-  visibleItems: HistoryItem[]
-}
+/** 扁平行模型：按天分组展开成 `[groupHeader, ...rows]`，供虚拟窗口切片。
+ *  条目行的 `padBottom`：组内条目间 8px（原 `gap-2`）；组内末条与列表末条
+ *  不带 pb，组间距 20px 由非首组 header 的 `pt-5`（原 `gap-5`）单独承担。 */
+type FlatRow =
+  | { kind: 'header'; key: string; label: string; weekday: string; count: number; first: boolean }
+  | { kind: 'item'; key: string; item: HistoryItem; padBottom: boolean }
 
-interface RenderWindow {
-  key: string
-  limit: number
-}
-
-type RenderSchedulerWindow = Window & {
-  requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number
-  cancelIdleCallback?: (handle: number) => void
-}
-
-const INITIAL_HISTORY_RENDER_COUNT = 36
-const HISTORY_RENDER_CHUNK_SIZE = 72
-
-function scheduleHistoryRenderChunk(callback: () => void): () => void {
-  const scheduler = window as RenderSchedulerWindow
-
-  if (scheduler.requestIdleCallback && scheduler.cancelIdleCallback) {
-    const handle = scheduler.requestIdleCallback(callback, { timeout: 120 })
-    return () => scheduler.cancelIdleCallback?.(handle)
-  }
-
-  const handle = window.setTimeout(callback, 16)
-  return () => window.clearTimeout(handle)
-}
+/** 估高（测量前的回退）：分组头 / 条目行两档，实测后由 useVirtualList 修正。 */
+const HEADER_ROW_ESTIMATE = 50
+const ITEM_ROW_ESTIMATE = 116
 
 export default function HistoryPage() {
   const { t, i18n } = useTranslation()
@@ -59,10 +42,7 @@ export default function HistoryPage() {
   const [items, setItems] = React.useState<HistoryItem[]>([])
   const [loading, setLoading] = React.useState(true)
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
-  const [renderWindow, setRenderWindow] = React.useState<RenderWindow>({
-    key: '',
-    limit: INITIAL_HISTORY_RENDER_COUNT,
-  })
+  const listRef = React.useRef<HTMLDivElement>(null)
 
   const locale = getLocale(i18n.language)
   const numberFormatter = React.useMemo(() => new Intl.NumberFormat(locale), [locale])
@@ -156,10 +136,6 @@ export default function HistoryPage() {
     )
   }, [items, searchQuery, sortOrder])
 
-  const renderKey = `${items.length}:${sortOrder}:${searchQuery}`
-  const effectiveRenderLimit =
-    renderWindow.key === renderKey ? renderWindow.limit : INITIAL_HISTORY_RENDER_COUNT
-
   const groupedItems = React.useMemo<DayGroup[]>(() => {
     const groups: DayGroup[] = []
     const index = new Map<string, DayGroup>()
@@ -176,50 +152,43 @@ export default function HistoryPage() {
     return groups
   }, [filteredItems, formatDateGroup, formatWeekday])
 
-  const visibleGroups = React.useMemo<VisibleDayGroup[]>(() => {
-    let remaining = effectiveRenderLimit
-    const groups: VisibleDayGroup[] = []
-
-    for (const group of groupedItems) {
-      if (remaining <= 0) break
-
-      const visibleItems = group.items.slice(0, remaining)
-      remaining -= visibleItems.length
-
-      if (visibleItems.length > 0) {
-        groups.push({ ...group, visibleItems })
-      }
-    }
-
-    return groups
-  }, [effectiveRenderLimit, groupedItems])
-
-  React.useEffect(() => {
-    setRenderWindow((prev) => {
-      if (prev.key === renderKey) return prev
-      return {
-        key: renderKey,
-        limit: Math.min(INITIAL_HISTORY_RENDER_COUNT, filteredItems.length),
-      }
-    })
-  }, [filteredItems.length, renderKey])
-
-  React.useEffect(() => {
-    const currentLimit = Math.min(effectiveRenderLimit, filteredItems.length)
-    if (currentLimit >= filteredItems.length) return
-
-    return scheduleHistoryRenderChunk(() => {
-      React.startTransition(() => {
-        setRenderWindow((prev) => {
-          if (prev.key !== renderKey) return prev
-          return {
-            key: renderKey,
-            limit: Math.min(filteredItems.length, prev.limit + HISTORY_RENDER_CHUNK_SIZE),
-          }
-        })
+  // 扁平行模型：按天分组展开为 [groupHeader, ...rows]，整表交给虚拟窗口。
+  const flatRows = React.useMemo<FlatRow[]>(() => {
+    const rows: FlatRow[] = []
+    groupedItems.forEach((group) => {
+      rows.push({
+        kind: 'header',
+        key: `h:${group.label}`,
+        label: group.label,
+        weekday: group.weekday,
+        count: group.items.length,
+        first: rows.length === 0,
+      })
+      group.items.forEach((item) => {
+        rows.push({ kind: 'item', key: `i:${item.id}`, item, padBottom: true })
       })
     })
-  }, [effectiveRenderLimit, filteredItems.length, renderKey])
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i]
+      if (row.kind === 'item') {
+        const next = rows[i + 1]
+        row.padBottom = next !== undefined && next.kind === 'item'
+      }
+    }
+    return rows
+  }, [groupedItems])
+
+  const virtualRows = React.useMemo(
+    () =>
+      flatRows.map((row) => ({
+        key: row.key,
+        estimate: row.kind === 'header' ? HEADER_ROW_ESTIMATE : ITEM_ROW_ESTIMATE,
+      })),
+    [flatRows],
+  )
+
+  const { visibleWindow, measureRef } = useVirtualList(virtualRows, listRef)
+  const visibleRows = flatRows.slice(visibleWindow.start, visibleWindow.end)
 
   const selected = React.useMemo(
     () => items.find((item) => item.id === selectedId) ?? null,
@@ -364,44 +333,54 @@ export default function HistoryPage() {
         </div>
       ) : (
         <div className="mt-6 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_332px]">
-          {/* 鍒楄〃 */}
-          <div className="flex flex-col gap-5">
-            {visibleGroups.map((group) => (
-              <div key={group.label}>
-                <div className="mb-2.5 flex items-center gap-2.5">
-                  <span className="font-display text-sm font-semibold text-foreground">
-                    {group.label}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">{group.weekday}</span>
-                  <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-                    {t('history.groupCount', {
-                      count: group.items.length,
-                      formattedCount: formatNumber(group.items.length),
-                    })}
-                  </span>
+          {/* 列表（虚拟窗口：只渲染视口 ± overscan 行） */}
+          <div ref={listRef} className="flex flex-col">
+            <div style={{ height: visibleWindow.topSpacer }} aria-hidden />
+            {visibleRows.map((row) =>
+              row.kind === 'header' ? (
+                <div
+                  key={row.key}
+                  ref={measureRef(row.key)}
+                  className={cn(row.first ? 'pb-2.5' : 'pb-2.5 pt-5')}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="font-display text-sm font-semibold text-foreground">
+                      {row.label}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">{row.weekday}</span>
+                    <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                      {t('history.groupCount', {
+                        count: row.count,
+                        formattedCount: formatNumber(row.count),
+                      })}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex flex-col gap-2">
-                  {group.visibleItems.map((item) => (
-                    <HistoryRow
-                      key={item.id}
-                      item={item}
-                      selected={selectedId === item.id}
-                      time={formatTime(item.timestamp)}
-                      charLabel={formatNumber(countCharacters(item.text))}
-                      seconds={Math.max(1, Math.round((item.duration ?? 0) / 1000))}
-                      onSelect={selectItem}
-                      onCopy={copyToClipboard}
-                      onDelete={deleteItem}
-                      copyTitle={t('history.copyTitle')}
-                      deleteTitle={t('history.deleteTitle')}
-                      selectionLabel={t('history.selectionOriginal')}
-                      secondsLabel={formatSecondsLabel}
-                      charUnit={t('home.charUnit')}
-                    />
-                  ))}
+              ) : (
+                <div
+                  key={row.key}
+                  ref={measureRef(row.key)}
+                  className={row.padBottom ? 'pb-2' : undefined}
+                >
+                  <HistoryRow
+                    item={row.item}
+                    selected={selectedId === row.item.id}
+                    time={formatTime(row.item.timestamp)}
+                    charLabel={formatNumber(countCharacters(row.item.text))}
+                    seconds={Math.max(1, Math.round((row.item.duration ?? 0) / 1000))}
+                    onSelect={selectItem}
+                    onCopy={copyToClipboard}
+                    onDelete={deleteItem}
+                    copyTitle={t('history.copyTitle')}
+                    deleteTitle={t('history.deleteTitle')}
+                    selectionLabel={t('history.selectionOriginal')}
+                    secondsLabel={formatSecondsLabel}
+                    charUnit={t('home.charUnit')}
+                  />
                 </div>
-              </div>
-            ))}
+              ),
+            )}
+            <div style={{ height: visibleWindow.bottomSpacer }} aria-hidden />
           </div>
 
           {/* 璇︽儏 */}

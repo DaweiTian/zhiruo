@@ -136,7 +136,7 @@ mod tests {
         let cases = load_cases();
         let mut outputs = Vec::new();
         for case in &cases {
-            let out = crate::llm::refine_text(&case.raw, &config)
+            let out = crate::llm::refine_text(&case.raw, &config, &[])
                 .await
                 .expect("refine call");
             outputs.push(out);

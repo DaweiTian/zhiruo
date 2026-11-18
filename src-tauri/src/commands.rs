@@ -1104,13 +1104,19 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
         if api_key.trim().is_empty() {
             return Err("云端 API Key 为空，请到「设置 - 云端识别」填写。".into());
         }
+        // Owned: hotwords make the instruction non-static; bound before CloudCall
+        // so the borrow outlives the struct.
+        let instruction = asr::chat_audio_instruction_with_hotwords(
+            &config.asr.cloud_preset,
+            &config.asr.hotwords,
+        );
         let call = asr::CloudCall {
             api_key: &api_key,
             base_url: &base,
             model: &model,
             language: "auto",
             dialect,
-            instruction: asr::chat_audio_instruction(&config.asr.cloud_preset),
+            instruction: &instruction,
         };
         match dialect {
             // The transcriptions endpoint has no chat delta stream: non-stream only.
@@ -1177,13 +1183,17 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
         if api_key.trim().is_empty() {
             return Err("云端 API Key 为空，请到「设置 - 云端识别」填写。".into());
         }
+        let instruction = asr::chat_audio_instruction_with_hotwords(
+            &config.asr.cloud_preset,
+            &config.asr.hotwords,
+        );
         let call = asr::CloudCall {
             api_key: &api_key,
             base_url: &base,
             model: &model,
             language: "auto",
             dialect,
-            instruction: asr::chat_audio_instruction(&config.asr.cloud_preset),
+            instruction: &instruction,
         };
         asr::transcribe_cloud(&call, &audio).await?
     };
@@ -1208,7 +1218,7 @@ async fn stop_session_inner<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Str
                 "transcript": final_text,
             }),
         );
-        match llm::refine_text(&final_text, &config.llm_refine).await {
+        match llm::refine_text(&final_text, &config.llm_refine, &config.asr.hotwords).await {
             Ok(processed) if !processed.trim().is_empty() => final_text = processed,
             Ok(_) => {}
             Err(e) => {
@@ -2119,7 +2129,7 @@ pub async fn show_settings_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn refine_text(state: State<'_, AppState>, text: String) -> Result<String, String> {
     let config = state.config.load();
-    llm::refine_text(&text, &config.llm_refine).await
+    llm::refine_text(&text, &config.llm_refine, &config.asr.hotwords).await
 }
 
 #[tauri::command]

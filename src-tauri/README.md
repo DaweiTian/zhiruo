@@ -470,7 +470,11 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   人工确认才入库）。窗口生命周期归 `windowing::ensure_picker_window`（隐藏 / 重建，
   绝不销毁）。
 - `src/config.rs` - 配置存储（`voice-key-config.json`）。ASR 段含
-  `micKeepAlive`（麦克风保温，默认开）等录音行为开关；`picker` 段含快速插入面板
+  `micKeepAlive`（麦克风保温，默认开）等录音行为开关与 `hotwords` 自定义热词表
+  （100 条 × 64 字，设计 3.2；双通道 = ASR 指令提示 + 精炼 prompt 纠正段）；
+  `llmRefine` 段含 `refineStyle` / `refineStyleCustom` 风格预设（设计 3.1，
+  `default|email|xiaohongshu|weekly|brief|english-business|custom`，自定义描述
+  500 字；作用于整理工与选区润色改写）；`picker` 段含快速插入面板
   （侧键 X1/X2 落点 `snippets | clipboard | both | hub`、剪贴板采集、
   常用词 `userSnippets`，normalizer 与 userGlossary
   同一纪律、单条 256 字符；0.10.x 的 `hubButton` 遗留键加载时迁移成落点 `hub`，
@@ -493,7 +497,9 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
 - `src/asr.rs` - 通用云端识别：按 `CloudDialect` 分叉请求载荷——`chat_asr_data_url`
   （MiMo / 千问：`input_audio.data` 传 data URL + 顶层 `asr_options`，与 0.5.11 载荷逐字节
   一致）、`chat_openai_audio`（OpenAI / 豆包 Ark：纯 base64 + `format:"wav"` + 转写指令
-  part）、`openai_transcribe`（multipart `{base}/audio/transcriptions`，非流式）。流式
+  part）、`openai_transcribe`（multipart `{base}/audio/transcriptions`，非流式）。转写指令
+  `chat_audio_instruction_with_hotwords` = 基础指令 + 热词写法提示（设计 3.2 通道 A，
+  仅 `chat_openai_audio` 消费）。流式
   `transcribe_cloud_stream`（SSE，HUD 边生成边显示）+ 非流式 `transcribe_cloud` 回退；audio
   管线共用 WAV 编码 `encode_wav_mono_f32`。本地识别（SenseVoice / X-ASR）已在 0.5.11 移除。
 - `src/audio.rs` / `src/inject.rs` / `src/llm.rs` /

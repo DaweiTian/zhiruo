@@ -49,6 +49,38 @@ pub fn chat_audio_instruction(preset: &str) -> &'static str {
     }
 }
 
+/// [`chat_audio_instruction`] + 热词提示（功能方案设计 3.2 通道 A）：热词
+/// 写法追加在基础指令之后，让音频理解模型转写时偏向这些写法。仅
+/// `chat_openai_audio` 方言消费 `instruction`，其他方言忽略；无热词时返回
+/// 基础指令的原样拷贝。语言跟随基础指令（doubao 中文、其余英文）。
+pub fn chat_audio_instruction_with_hotwords(preset: &str, hotwords: &[String]) -> String {
+    let base = chat_audio_instruction(preset);
+    let mut seen = std::collections::HashSet::new();
+    let mut terms: Vec<&str> = Vec::new();
+    for term in hotwords {
+        let trimmed = term.trim();
+        if trimmed.is_empty() || !seen.insert(trimmed) {
+            continue;
+        }
+        terms.push(trimmed);
+    }
+    if terms.is_empty() {
+        return base.to_string();
+    }
+    if preset == "doubao_ark" {
+        format!(
+            "{base}\n\n若音频中出现与下列词语发音相近的内容，请按下列写法输出：{}。",
+            terms.join("、")
+        )
+    } else {
+        format!(
+            "{base}\n\nIf any spoken words sound close to the following terms, \
+             output these exact spellings: {}.",
+            terms.join(", ")
+        )
+    }
+}
+
 /// Everything a cloud request needs. `instruction` is only consumed by the
 /// `chat_openai_audio` dialect; other dialects ignore it.
 #[derive(Debug, Clone, Copy)]
@@ -514,6 +546,35 @@ mod tests {
     fn doubao_instruction_is_chinese_transcribe_only() {
         assert!(chat_audio_instruction("doubao_ark").contains("仅以文字形式返回识别结果"));
         assert_eq!(chat_audio_instruction("openai"), "Transcribe this audio.");
+    }
+
+    #[test]
+    fn hotword_instruction_suffix_only_when_hotwords_present() {
+        let base = chat_audio_instruction_with_hotwords("openai", &[]);
+        assert_eq!(base, "Transcribe this audio.");
+        let base = chat_audio_instruction_with_hotwords("openai", &["   ".to_string()]);
+        assert_eq!(base, "Transcribe this audio.");
+
+        let with_terms = chat_audio_instruction_with_hotwords(
+            "openai",
+            &[
+                "芷若".to_string(),
+                " 芷若 ".to_string(),
+                "Zhiruo".to_string(),
+            ],
+        );
+        assert!(with_terms.starts_with("Transcribe this audio."));
+        assert!(with_terms.contains("output these exact spellings"));
+        assert_eq!(with_terms.matches("芷若").count(), 1);
+        assert!(with_terms.contains("Zhiruo"));
+    }
+
+    #[test]
+    fn hotword_instruction_follows_base_language() {
+        let doubao = chat_audio_instruction_with_hotwords("doubao_ark", &["文晓".to_string()]);
+        assert!(doubao.contains("仅以文字形式返回识别结果"));
+        assert!(doubao.contains("请按下列写法输出"));
+        assert!(doubao.contains("文晓"));
     }
 
     #[test]

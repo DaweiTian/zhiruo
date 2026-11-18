@@ -9,6 +9,7 @@ import type {
   OpenAIConfig,
   OpenRouterConfig,
   OpenRouterModel,
+  RefineStyle,
   TokenDanceConfig,
   MimoConfig,
 } from './types'
@@ -67,6 +68,8 @@ export const defaultLLMRefineConfig: LLMRefineConfig = {
   custom: DEFAULT_CUSTOM_CONFIG,
   userGlossary: [],
   fillerCleanup: 'off',
+  refineStyle: 'default',
+  refineStyleCustom: '',
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -359,6 +362,29 @@ export function normalizeFillerCleanup(raw: unknown): FillerCleanupMode {
   return FILLER_CLEANUP_MODES.find((mode) => mode === raw) ?? 'off'
 }
 
+/** 风格预设 id 白名单（与 Rust `normalize_refine_style` 同一口径）。 */
+export const REFINE_STYLES: readonly RefineStyle[] = [
+  'default',
+  'email',
+  'xiaohongshu',
+  'weekly',
+  'brief',
+  'english-business',
+  'custom',
+]
+
+/** 自定义风格描述上限（码点数，与 Rust 侧 500 字夹取同口径）。 */
+export const MAX_REFINE_STYLE_CUSTOM_LENGTH = 500
+
+export function normalizeRefineStyle(raw: unknown): RefineStyle {
+  return REFINE_STYLES.find((style) => style === raw) ?? 'default'
+}
+
+export function normalizeRefineStyleCustom(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  return [...raw.trim()].slice(0, MAX_REFINE_STYLE_CUSTOM_LENGTH).join('')
+}
+
 export function normalizeLLMRefineConfig(config?: Partial<LLMRefineConfig>): LLMRefineConfig {
   const rawConfig =
     config && typeof config === 'object'
@@ -398,6 +424,8 @@ export function normalizeLLMRefineConfig(config?: Partial<LLMRefineConfig>): LLM
     custom,
     userGlossary: normalizeUserGlossary(rawConfig?.userGlossary),
     fillerCleanup: normalizeFillerCleanup(rawConfig?.fillerCleanup),
+    refineStyle: normalizeRefineStyle(rawConfig?.refineStyle),
+    refineStyleCustom: normalizeRefineStyleCustom(rawConfig?.refineStyleCustom),
   }
 }
 

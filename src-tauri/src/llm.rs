@@ -236,17 +236,26 @@ fn strip_think(content: &str) -> String {
     trimmed.to_string()
 }
 
-/// 一次精炼调用的 system prompt：基础护栏 + 本次的用户词表 + 口水词规则。
+/// 一次精炼调用的 system prompt：基础护栏 + 本次的用户词表 + 口水词规则 +
+/// 热词纠正 + 风格预设（段落顺序见 [`crate::refine_prompt::build_refine_system_prompt`]）。
 /// 永远只有一次 LLM 调用——口水词清理折叠进本 prompt，不做第二次请求。
-pub fn system_prompt_for(config: &LLMRefineConfig) -> String {
+/// `hotwords` 来自 `asr.hotwords`（热词表与 ASR 配置同侧），与词表独立。
+pub fn system_prompt_for(config: &LLMRefineConfig, hotwords: &[String]) -> String {
     crate::refine_prompt::build_refine_system_prompt(
         &config.user_glossary,
         FillerCleanupMode::parse(&config.filler_cleanup) == FillerCleanupMode::Llm,
+        &config.refine_style,
+        &config.refine_style_custom,
+        hotwords,
     )
 }
 
-pub async fn refine_text(text: &str, config: &LLMRefineConfig) -> Result<String, String> {
-    let system = system_prompt_for(config);
+pub async fn refine_text(
+    text: &str,
+    config: &LLMRefineConfig,
+    hotwords: &[String],
+) -> Result<String, String> {
+    let system = system_prompt_for(config, hotwords);
     chat_completion(&system, text, config).await
 }
 
@@ -259,9 +268,24 @@ pub async fn translate_text(
     chat_completion(TRANSLATE_SYSTEM_PROMPT, &user, config).await
 }
 
-/// 选区动作「润色改写」：原文语言内改写，不换语种。
+/// 选区动作「润色改写」的 system prompt：`POLISH_SYSTEM_PROMPT` + 风格段。
+/// 热词段不进本 prompt（热词只服务转写纠错）。
+fn polish_system_prompt(config: &LLMRefineConfig) -> String {
+    let style = crate::refine_prompt::build_style_section(
+        &config.refine_style,
+        &config.refine_style_custom,
+    );
+    if style.is_empty() {
+        POLISH_SYSTEM_PROMPT.to_string()
+    } else {
+        format!("{POLISH_SYSTEM_PROMPT}\n\n{style}")
+    }
+}
+
+/// 选区动作「润色改写」：原文语言内改写，不换语种。风格预设（3.1）同样
+/// 作用于本动作：只改表达方式，不推翻本 prompt 的语言/含义约束。
 pub async fn polish_text(text: &str, config: &LLMRefineConfig) -> Result<String, String> {
-    chat_completion(POLISH_SYSTEM_PROMPT, text, config).await
+    chat_completion(&polish_system_prompt(config), text, config).await
 }
 
 /// 选区动作「解释说明」：返回解释文本（不写回文档）。
@@ -298,20 +322,46 @@ mod tests {
         config.user_glossary = vec!["张伟".to_string()];
         config.filler_cleanup = "llm".into();
 
-        let prompt = system_prompt_for(&config);
+        let prompt = system_prompt_for(&config, &[]);
         assert!(prompt.contains("- 张伟"));
         assert!(prompt.contains("Filler-word cleanup"));
 
         config.filler_cleanup = "rules".into();
-        let prompt = system_prompt_for(&config);
+        let prompt = system_prompt_for(&config, &[]);
         assert!(prompt.contains("- 张伟"));
         assert!(!prompt.contains("Filler-word cleanup"));
     }
 
     #[test]
     fn system_prompt_defaults_are_safe() {
-        let prompt = system_prompt_for(&LLMRefineConfig::default());
+        let prompt = system_prompt_for(&LLMRefineConfig::default(), &[]);
         assert!(prompt.contains("Minimal edit rules"));
         assert!(!prompt.contains("Preferred glossary terms:"));
+        assert!(!prompt.contains("Target writing style"));
+    }
+
+    #[test]
+    fn system_prompt_passes_style_and_hotwords() {
+        let mut config = LLMRefineConfig::default();
+        config.refine_style = "email".into();
+        let prompt = system_prompt_for(&config, &["芷若".to_string()]);
+        assert!(prompt.contains("Target writing style for this run:"));
+        assert!(prompt.contains("professional email"));
+        assert!(prompt.contains("Hotword corrections"));
+        assert!(prompt.contains("- 芷若"));
+    }
+
+    #[test]
+    fn polish_system_carries_style_but_not_hotwords() {
+        let mut config = LLMRefineConfig::default();
+        assert_eq!(polish_system_prompt(&config), POLISH_SYSTEM_PROMPT);
+
+        config.refine_style = "weekly".into();
+        let system = polish_system_prompt(&config);
+        assert!(system.starts_with(POLISH_SYSTEM_PROMPT));
+        assert!(system.contains("Target writing style for this run:"));
+        assert!(system.contains("weekly work report"));
+        // polish 走 POLISH_SYSTEM_PROMPT + 风格段，不带热词段（热词只服务转写纠错）。
+        assert!(!system.contains("Hotword corrections"));
     }
 }

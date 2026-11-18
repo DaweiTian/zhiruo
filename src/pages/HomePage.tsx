@@ -1,13 +1,15 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { ReactNode, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { Mic, Hash, Clock, TrendingUp } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { VoiceWave } from '@/components/VoiceWave'
 import { HotkeyKeys } from '@/components/HotkeyKeys'
 import StatsOverview from '@/components/StatsOverview'
-import InteractiveCharts from '@/components/InteractiveCharts'
 import { computeStats, type HistoryItem, type StoredDictationStats } from '@/lib/stats'
 import { useStatFormatters } from '@/lib/useStatFormatters'
+
+// recharts 体量大：拆成独立 chunk，进入视口再加载（功能方案设计 3.3）。
+const InteractiveCharts = lazy(() => import('@/components/InteractiveCharts'))
 
 function greetingKey(): string {
   const hour = new Date().getHours()
@@ -75,6 +77,60 @@ function MiniStat({ icon, value, label }: { icon: ReactNode; value: string; labe
       <div className="tnum font-display text-[19px] font-semibold tracking-tight text-foreground">
         {value}
       </div>
+    </div>
+  )
+}
+
+function ChartsPlaceholder() {
+  return (
+    <div className="overflow-hidden rounded-2xl border bg-card">
+      <div className="h-[360px] animate-pulse bg-muted/30" />
+    </div>
+  )
+}
+
+/** 图表进视口再挂载：IntersectionObserver 触发 lazy chunk 加载。 */
+function LazyInteractiveCharts({
+  historyItems,
+  loading,
+}: {
+  historyItems: HistoryItem[]
+  loading: boolean
+}) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    if (visible) return
+    const el = hostRef.current
+    if (!el) return
+    if (typeof IntersectionObserver === 'undefined') {
+      // 无 IO 环境直接加载，但避开 effect 内同步 setState。
+      const handle = window.setTimeout(() => setVisible(true), 0)
+      return () => window.clearTimeout(handle)
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '200px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [visible])
+
+  return (
+    <div ref={hostRef}>
+      {visible ? (
+        <Suspense fallback={<ChartsPlaceholder />}>
+          <InteractiveCharts historyItems={historyItems} loading={loading} />
+        </Suspense>
+      ) : (
+        <ChartsPlaceholder />
+      )}
     </div>
   )
 }
@@ -234,7 +290,7 @@ export default function HomePage() {
 
       {/* 趋势 */}
       <div className="vk-rise mt-7 pb-2" style={{ animationDelay: '210ms' }}>
-        <InteractiveCharts historyItems={historyItems} loading={loading} />
+        <LazyInteractiveCharts historyItems={historyItems} loading={loading} />
       </div>
     </div>
   )

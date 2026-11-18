@@ -32,6 +32,8 @@ export interface ASRConfig {
   cloudPreset?: string
   /** Request dialect; drives the payload shape (see {@link CloudDialect}). */
   cloudDialect?: CloudDialect
+  /** 自定义热词表（人名/术语正词，上限 100 条 × 64 字）；转写与整理工双向纠错。 */
+  hotwords?: string[]
 }
 
 export type LLMProvider =
@@ -87,6 +89,19 @@ export interface CustomCompatibleLLMConfig {
 /** 口水词清理档位：关 / 仅规则 / 随精炼（LLM）。 */
 export type FillerCleanupMode = 'off' | 'rules' | 'llm'
 
+/**
+ * 风格预设 id（功能方案设计 3.1）：口述整理 / 选区润色改写的目标文体。
+ * `default` = 不产出风格段（与历史行为一致）；`custom` 用 `refineStyleCustom`。
+ */
+export type RefineStyle =
+  | 'default'
+  | 'email'
+  | 'xiaohongshu'
+  | 'weekly'
+  | 'brief'
+  | 'english-business'
+  | 'custom'
+
 export interface LLMRefineConfig {
   enabled: boolean
   provider: LLMProvider
@@ -105,6 +120,10 @@ export interface LLMRefineConfig {
   userGlossary: string[]
   /** 口水词清理档位。 */
   fillerCleanup: FillerCleanupMode
+  /** 风格预设 id：口述整理 / 选区润色改写按指定文体产出。 */
+  refineStyle: RefineStyle
+  /** 选 `custom` 时的自定义风格描述（上限 500 字）。 */
+  refineStyleCustom: string
 }
 
 export interface TranslationConfig {

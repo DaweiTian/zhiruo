@@ -5,8 +5,11 @@ import {
   buildLLMAttributionHeaders,
   normalizeFillerCleanup,
   normalizeLLMRefineConfig,
+  normalizeRefineStyle,
+  normalizeRefineStyleCustom,
   normalizeUserGlossary,
   resolveLLMConnection,
+  MAX_REFINE_STYLE_CUSTOM_LENGTH,
 } from './llm-config'
 import type { LLMRefineConfig } from './types'
 
@@ -239,6 +242,47 @@ describe('normalizeLLMRefineConfig filler/glossary defaults', () => {
     const normalized = normalizeLLMRefineConfig({
       userGlossary: ['张伟', '芷若'],
       fillerCleanup: 'rules',
+    })
+    expect(normalizeLLMRefineConfig(normalized)).toEqual(normalized)
+  })
+})
+
+describe('normalizeRefineStyle / normalizeRefineStyleCustom', () => {
+  it('keeps known preset ids and falls back to default', () => {
+    for (const id of [
+      'default',
+      'email',
+      'xiaohongshu',
+      'weekly',
+      'brief',
+      'english-business',
+      'custom',
+    ] as const) {
+      expect(normalizeRefineStyle(id)).toBe(id)
+    }
+    expect(normalizeRefineStyle('Email')).toBe('default')
+    expect(normalizeRefineStyle(undefined)).toBe('default')
+    expect(normalizeRefineStyle('drop-everything')).toBe('default')
+  })
+
+  it('trims and caps the custom description at 500 code points', () => {
+    expect(normalizeRefineStyleCustom('  写成邮件口吻  ')).toBe('写成邮件口吻')
+    expect(normalizeRefineStyleCustom(42)).toBe('')
+    expect(normalizeRefineStyleCustom('长'.repeat(600))).toHaveLength(
+      MAX_REFINE_STYLE_CUSTOM_LENGTH,
+    )
+    expect([...normalizeRefineStyleCustom('🙂'.repeat(600))]).toHaveLength(
+      MAX_REFINE_STYLE_CUSTOM_LENGTH,
+    )
+  })
+
+  it('defaults refineStyle to default with empty custom text', () => {
+    const config = normalizeLLMRefineConfig({})
+    expect(config.refineStyle).toBe('default')
+    expect(config.refineStyleCustom).toBe('')
+    const normalized = normalizeLLMRefineConfig({
+      refineStyle: 'xiaohongshu',
+      refineStyleCustom: '活泼一点',
     })
     expect(normalizeLLMRefineConfig(normalized)).toEqual(normalized)
   })

@@ -15,6 +15,7 @@ import {
   markRefineConnectionValidated,
   normalizeInjectConfig,
   normalizePickerConfig,
+  normalizeRendererConfig,
   readRefineFeatureFlags,
   reconcileRefineFeaturesAfterConnectionChange,
   resolveMicrophoneDeviceMigration,
@@ -518,5 +519,24 @@ describe('inject config normalization', () => {
     expect(normalizeInjectConfig({ mode: 'keybd' as never }).mode).toBe('auto')
     expect(normalizeInjectConfig({}).mode).toBe('auto')
     expect(normalizeInjectConfig().mode).toBe('auto')
+  })
+})
+
+describe('hotwords normalization on load', () => {
+  it('cleans hotwords like the glossary (trim, dedupe, 100 × 64)', () => {
+    const config = createConfig('key')
+    const normalized = normalizeRendererConfig({
+      ...config,
+      asr: {
+        ...config.asr,
+        hotwords: [' 芷若 ', '芷若', '', 'x'.repeat(65), 'Zhiruo'],
+      },
+    })
+    expect(normalized.asr.hotwords).toEqual(['芷若', 'Zhiruo'])
+  })
+
+  it('defaults to an empty hotword list', () => {
+    const normalized = normalizeRendererConfig(createConfig('key'))
+    expect(normalized.asr.hotwords).toEqual([])
   })
 })

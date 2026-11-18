@@ -4,8 +4,8 @@
 //! 自由改写会让 ASR 结果字错率不降反升（RLLM-CF 记录 5%→53%），而 DRES
 //! 基准记录了 LLM 过度删除口水词导致语义崩塌的失败模式。因此本 prompt 必须
 //! 携带：最小修改约束、"那个/就是/然后"歧义保留规则、实体/数字保护、以及
-//! "文本已干净则逐字原样输出"。口水词清理（`llm` 档）与用户词表纠错都折叠
-//! 进这一次调用的 prompt，绝不新增第二次 LLM 请求。
+//! "文本已干净则逐字原样输出"。口水词清理（`llm` 档）、用户词表纠错、热词
+//! 纠正与风格预设都折叠进这一次调用的 prompt，绝不新增第二次 LLM 请求。
 
 /// 基础 prompt：护栏 + 实体保护 + 安全边界。
 pub const REFINE_BASE_SYSTEM_PROMPT: &str = "\
@@ -67,8 +67,87 @@ pub fn build_glossary_section(glossary_terms: &[String]) -> String {
     section
 }
 
+/// 热词段落（纠正听错）：与词表段独立并存——词表是「保留原样」，
+/// 热词是「发音相近时纠正为目标写法」。只有存在非空词条时才追加。
+pub fn build_hotword_section(hotwords: &[String]) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for term in hotwords {
+        let trimmed = term.trim();
+        if trimmed.is_empty() || !seen.insert(trimmed.to_string()) {
+            continue;
+        }
+        lines.push(format!("- {trimmed}"));
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut section = String::from(
+        "Hotword corrections (this run):\n\
+         If a word in the transcript sounds close to one of the terms below, correct it to the exact\n\
+         spelling listed. Apply this only to close phonetic matches supported by context; never force\n\
+         a term onto unrelated text.\n",
+    );
+    section.push_str(&lines.join("\n"));
+    section
+}
+
+/// 风格段落（口述 → 指定文体，功能方案设计 3.1）。`default` 与未知 id 不产出
+/// 任何内容（与不带风格的历史输出逐字一致）；`custom` 用用户描述（空则跳过）。
+/// 风格只放松「最小修改」里对语序/措辞的限制，实体保护与输出约束仍以上位
+/// 规则为准——预设文案归这里，渲染层只有 Select 标签。
+pub fn build_style_section(style_id: &str, custom: &str) -> String {
+    let target: String = match style_id {
+        "email" => {
+            "A professional email body: a polite opening line, short clear paragraphs, and a \
+             courteous closing. Do not invent a recipient, sender, or names not in the text."
+                .into()
+        }
+        "xiaohongshu" => {
+            "A Xiaohongshu (RED) note: lively conversational tone, short punchy lines, \
+             enthusiastic but natural. Plain text only."
+                .into()
+        }
+        "weekly" => "A weekly work report: concise progress points grouped by work item, verb-led \
+             phrases, plain professional tone. Do not invent progress not in the text."
+            .into(),
+        "brief" => {
+            "A terse brief: drop pleasantries and redundant wording, keep every fact and number, \
+             as short as clarity allows."
+                .into()
+        }
+        "english-business" => {
+            "Formal business register for workplace communication: clear, polite, neutral tone, \
+             complete sentences. Keep the original language; change only the register."
+                .into()
+        }
+        "custom" => custom.trim().chars().take(500).collect(),
+        _ => String::new(),
+    };
+    if target.is_empty() {
+        return String::new();
+    }
+    format!(
+        "Target writing style for this run:\n\
+         {target}\n\
+         Restyle the text to match the target style above. You may rephrase wording, reorder\n\
+         sentences, and reshape the form for this purpose. Never add facts not in the text, never\n\
+         change names, numbers, dates, URLs, or quoted text, and keep the original language. When\n\
+         the style conflicts with the output constraints of this prompt, those constraints win."
+    )
+}
+
 /// 一次精炼调用的完整 system prompt。
-pub fn build_refine_system_prompt(glossary_terms: &[String], filler_cleanup_llm: bool) -> String {
+///
+/// 段落顺序（0.13 起含风格与热词）：base → 口水词 → 词表 → 热词 → 风格 → 输出规则。
+/// 任意段为空即整段跳过；`style_id = "default"` 时风格段不产出，与历史输出一致。
+pub fn build_refine_system_prompt(
+    glossary_terms: &[String],
+    filler_cleanup_llm: bool,
+    style_id: &str,
+    style_custom: &str,
+    hotwords: &[String],
+) -> String {
     let mut prompt = String::from(REFINE_BASE_SYSTEM_PROMPT);
     if filler_cleanup_llm {
         prompt.push_str("\n\n");
@@ -78,6 +157,16 @@ pub fn build_refine_system_prompt(glossary_terms: &[String], filler_cleanup_llm:
     if !glossary.is_empty() {
         prompt.push_str("\n\n");
         prompt.push_str(&glossary);
+    }
+    let hotword = build_hotword_section(hotwords);
+    if !hotword.is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(&hotword);
+    }
+    let style = build_style_section(style_id, style_custom);
+    if !style.is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(&style);
     }
     prompt.push_str("\n\n");
     prompt.push_str(OUTPUT_RULES);
@@ -90,7 +179,7 @@ mod tests {
 
     #[test]
     fn base_prompt_carries_minimal_edit_guardrails() {
-        let prompt = build_refine_system_prompt(&[], false);
+        let prompt = build_refine_system_prompt(&[], false, "default", "", &[]);
         assert!(prompt.contains("Minimal edit rules"));
         assert!(prompt.contains("never add facts"));
         assert!(prompt.contains("Never change names, numbers"));
@@ -101,7 +190,7 @@ mod tests {
 
     #[test]
     fn filler_rules_only_present_in_llm_mode() {
-        let prompt = build_refine_system_prompt(&[], true);
+        let prompt = build_refine_system_prompt(&[], true, "default", "", &[]);
         assert!(prompt.contains("Filler-word cleanup"));
         assert!(prompt.contains("那个"));
         assert!(prompt.contains("When a token could be either, keep it"));
@@ -117,6 +206,9 @@ mod tests {
                 "   ".to_string(),
             ],
             false,
+            "default",
+            "",
+            &[],
         );
         assert!(prompt.contains("Preferred glossary terms:"));
         assert_eq!(prompt.matches("- 张伟").count(), 1);
@@ -126,7 +218,87 @@ mod tests {
 
     #[test]
     fn empty_glossary_adds_no_section() {
-        let prompt = build_refine_system_prompt(&[], false);
+        let prompt = build_refine_system_prompt(&[], false, "default", "", &[]);
         assert!(!prompt.contains("Preferred glossary terms:"));
+    }
+
+    #[test]
+    fn default_style_adds_no_section_and_keeps_prompt_identical() {
+        let prompt = build_refine_system_prompt(&[], false, "default", "ignored", &[]);
+        let baseline = build_refine_system_prompt(&[], false, "default", "", &[]);
+        assert_eq!(prompt, baseline);
+        assert!(!prompt.contains("Target writing style"));
+    }
+
+    #[test]
+    fn unknown_style_id_adds_no_section() {
+        let prompt = build_refine_system_prompt(&[], false, "drop-everything", "", &[]);
+        assert!(!prompt.contains("Target writing style"));
+    }
+
+    #[test]
+    fn preset_style_inserts_before_output_rules() {
+        let prompt = build_refine_system_prompt(&[], false, "xiaohongshu", "", &[]);
+        assert!(prompt.contains("Target writing style for this run:"));
+        assert!(prompt.contains("Xiaohongshu"));
+        assert!(prompt.contains("Restyle the text to match the target style"));
+        let style_at = prompt.find("Target writing style").unwrap();
+        let rules_at = prompt.find("Output rules:").unwrap();
+        assert!(style_at < rules_at, "风格段必须插在输出规则之前");
+    }
+
+    #[test]
+    fn custom_style_uses_description_and_truncates_to_500() {
+        let prompt =
+            build_refine_system_prompt(&[], false, "custom", "  写成给客户的项目进展说明  ", &[]);
+        assert!(prompt.contains("写成给客户的项目进展说明"));
+        let long = "长".repeat(600);
+        let prompt = build_refine_system_prompt(&[], false, "custom", &long, &[]);
+        assert_eq!(prompt.matches('长').count(), 500);
+        // 空描述视同未配置
+        let prompt = build_refine_system_prompt(&[], false, "custom", "   ", &[]);
+        assert!(!prompt.contains("Target writing style"));
+    }
+
+    #[test]
+    fn hotword_section_lists_deduped_terms_and_is_distinct_from_glossary() {
+        let prompt = build_refine_system_prompt(
+            &["芷若".to_string()],
+            false,
+            "default",
+            "",
+            &[" 文晓 ".to_string(), "文晓".to_string(), "芷若".to_string()],
+        );
+        assert!(prompt.contains("Hotword corrections (this run):"));
+        assert_eq!(prompt.matches("- 文晓").count(), 1);
+        assert!(prompt.contains("- 芷若"));
+        assert!(prompt.contains("sounds close to one of the terms"));
+        assert!(prompt.contains("Preferred glossary terms:"));
+    }
+
+    #[test]
+    fn empty_hotwords_add_no_section() {
+        let prompt = build_refine_system_prompt(&[], false, "default", "", &["   ".to_string()]);
+        assert!(!prompt.contains("Hotword corrections"));
+    }
+
+    #[test]
+    fn section_order_is_base_filler_glossary_hotwords_style_output() {
+        let prompt = build_refine_system_prompt(
+            &["张伟".to_string()],
+            true,
+            "weekly",
+            "",
+            &["芷若".to_string()],
+        );
+        let filler_at = prompt.find("Filler-word cleanup").unwrap();
+        let glossary_at = prompt.find("Preferred glossary terms").unwrap();
+        let hotword_at = prompt.find("Hotword corrections").unwrap();
+        let style_at = prompt.find("Target writing style").unwrap();
+        let rules_at = prompt.find("Output rules:").unwrap();
+        assert!(filler_at < glossary_at);
+        assert!(glossary_at < hotword_at);
+        assert!(hotword_at < style_at);
+        assert!(style_at < rules_at);
     }
 }

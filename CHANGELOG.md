@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.15.0](https://github.com/DaweiTian/zhiruo/compare/v0.14.0...v0.15.0) (2026-11-18)
+
+全库横切审计（安全隐私 / 跨模块交互 / 一致性三路，4 HIGH / 10 MEDIUM / 11 LOW）的
+修复与加固版本，无新功能。
+
+### Bug Fixes
+
+- **session:** 并发双 stop 竞态——败者拿到 `ERR_NOT_RECORDING` 改静默，不再把胜者
+  还在 Processing 的会话强制置 Idle（watchdog 同款约定补到主路径）；「取消」对
+  处理中的会话此前实际无效（在途转写回来照常注入），现加取消标记 + 注入前 / 收尾前
+  双闸拦截，迟到错误也抑制
+- **stats:** `countCharacters` 与 Rust `char::is_whitespace` 在 U+0085 / U+FEFF 两个
+  码点上分类相反，同文本字符数会漂移——TS 改 Rust White_Space 白名单口径，双端
+  对拍用例锁定
+- **security:** 事件定向分发（新增 `events.rs`）——`app.emit` 广播此前把转写全文 /
+  最近剪贴板条目 / 选区预览送到全部 6 个窗口，现按事件路由到目标窗口；capability
+  移除渲染层未用的 clipboard-manager / dialog / global-shortcut 权限；`refine_text`
+  / `translate_text` / `copy_text` / `send_error` 补尺寸护栏；注入前剥控制字符
+  （ESC 序列进终端是注入面）
+- **config:** `userGlossary` 补宽容加载（`de_lenient_*`）——手改出坏条目此前会让整份
+  配置反序列化失败、静默清空 API key；`translateOutput` 缺键默认改 false（与
+  `Default` / 渲染层常量三方一致，老配置不再被静默打开翻译输出）；`app.language`
+  合并补 32 字上限；`HistoryManager` 补进程级锁（add / delete / clear 并发丢写）
+- **refine:** 词表段语义改「保留原样」与热词段「发音相近纠正」区分（此前两段近乎
+  重复），同词条两段去重；风格段显式声明放松最小修改规则的措辞 / 语序限制（此前
+  与 base 的 mandatory 规则直接打架）
+- **settings:** 语言单独保存失败后 `isAppPreferencesDirty` 不认账、永不再重试——
+  dirty 判定纳入 language；`mergeConfigPatch` 补 inject 段；目标语言 Select 兜底
+  归一旧值 `English`、占位文案 i18n 化；LLM 默认连接与目标语言默认值双端对齐
+  （mimo / 'english'）
+- **hud:** 卸载清理补 `setOverlayHoverGrab(false)`（硬故障重建后整窗可能卡在可交互）
+- **translate:** 选区原文改粘贴成功后才写史（失败不再留「已替换」孤条目）；渲染层
+  全局错误日志截断到 200 字符（reason 可能夹带转写片段）
+
+### Notes
+
+- 根 README（中英）构建依赖 / 项目结构 / 贡献指南三段重写为 Tauri 现状（中文版
+  顺带移除本地识别模型残段）；`tauri.conf.json` 的 `plugins.shell.open` 收紧为
+  false；package-lock 根版本对齐
+- 留待后续（i18n 死键清理、托盘 i18n、Electron 遗留目录处置、脱敏增强、补测清单）
+  与**发布前人工冒烟清单**见《功能方案设计.md》第 7 节——0.15 的事件分发与
+  capability 收权只过单测，装包后请按清单冒烟
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.14.0](https://github.com/DaweiTian/zhiruo/compare/v0.13.0...v0.14.0) (2026-11-18)
 
 ### Features

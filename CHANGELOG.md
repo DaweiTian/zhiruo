@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.14.0](https://github.com/DaweiTian/zhiruo/compare/v0.13.0...v0.14.0) (2026-11-18)
+
+### Features
+
+- **stats:** 听写战绩（功能方案设计 4.1）——按小时活跃度热力图（`hourly` 24 桶，STATS_VERSION 2→3 幂等迁移，清空重算防双计）、当前 / 最长连续天数（今天或昨天锚点口径）、8 枚成就徽章（首次听写 / 累计 1 千·1 万·10 万字 / 连续 7 天·30 天 / 单日 1000 字 / 音频 1 小时，纯前端推导无独立存储）；首页累计条扩六格 + `HourHeatmap` 24 格热力图（标注最活跃时段）+ `BadgeGrid` 两态徽章墙（解锁进度）
+- **hud:** 胶囊宠物「叶精灵」（功能方案设计 4.2）——`Pet.tsx` 共享内联 SVG 五态（idle 呼吸眨眼 / recording 电平张嘴弹跳 / processing 摇摆思考点 / success 雀跃 / error 耷拉轻抖），动画仅 transform/opacity、`prefers-reduced-motion` 降级静态形象；顶替待机窗 Mic 图形（热区 / 过渡 / 按压反馈不变）与会话窗状态圆章（≤36px 防挤压单行文字）
+- **settings:** 「胶囊形象」二选一（经典 / 叶精灵，卡片内嵌实时预览）——`capsuleSkin` 走 localStorage（`vk-capsule-skin`）+ storage 事件跨窗口同步，与主题同级的纯外观偏好，**默认 classic 行为零变化**
+
+### Notes
+
+- 统计口径收严：选区动作原文（`source: "selection"`）只入史供回溯、从不走 `record_add`，总量 / 小时桶两条回填与前端回退聚合同步过滤；小时桶键严格 0..23 十进制校验（拒绝 `1e1` / `0x2` 等 Number 旁路）、非法日键不计连续天数
+- 小时桶迁移重建窗口止于历史**写入即裁剪**的留存条目（90 天保留窗），此后只增不减、历史删除不缩水；缺 `version` 字段的手改文件按 0 走迁移路径，不会被当成最新版永远跳过
+- 独立审查修复（2 HIGH / 3 MEDIUM / 3 LOW）：迁移过滤选区项、`version` 字段级默认 0、小时键旁路校验、streak NaN 过滤、呼吸动画挂 `pet-breath` 消除死选择器
+- 版本号三处同步：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`；安装包交付到项目根 `dist/`（用户约定）
+
 ## [0.13.0](https://github.com/DaweiTian/zhiruo/compare/v0.12.0...v0.13.0) (2026-11-18)
 
 ### Features

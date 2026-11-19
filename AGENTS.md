@@ -97,18 +97,7 @@ voicekey/
     i18n.ts          Renderer i18n bootstrap.
     index.css        Tailwind base and theme variables.
   website/           Astro static marketing site (Cloudflare deploy).
-  public/            Desktop app static assets (PCM worklet, icons, tray icons).
-  scripts/           Local CommonJS helper scripts.
-```
-
-Legacy, **not part of the build** — kept only as a functional reference for
-porting behavior to Rust. Do not add features there; do not import from it.
-
-```text
-  electron/               Former Electron main/preload/shared code.
-  electron-builder.json5  Former packaging config (Tauri bundler is used now).
-  build/                  Former installer icon assets (src-tauri/icons/ is used).
-  dist-electron/          Stale Electron build output.
+  public/            Desktop app static assets (PCM worklet, app icon).
 ```
 
 Key root config files:

@@ -4,7 +4,6 @@ pnpm-lock.yaml
 
 # Build outputs
 dist/
-dist-electron/
 *.tsbuildinfo
 
 # IDE
@@ -20,10 +19,6 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-
-# Electron
-electron-builder-effective-config.yaml
 
 # 独立子项目（有自己的配置）
 website/

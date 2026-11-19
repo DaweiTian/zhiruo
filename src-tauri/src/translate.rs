@@ -1,7 +1,7 @@
 //! 选区动作编排（翻译快捷键 / 选区 hub 动作面板共用）：捕获前台应用选区 →
 //! LLM 处理 → 输出（改写类模拟粘贴覆盖选区，解释类只返回文本）。
 //!
-//! 移植自遗留 Electron 蓝本 `electron/main/translation/translator.ts`（只读参考）：
+//! 移植自原 Electron 蓝本 translator.ts（electron/ 已删除，此处仅保留来源说明）：
 //! 用「剪贴板哨兵 + 模拟 Ctrl+C + 轮询读取」判定是否真的选中了文字；`ClipboardGuard`
 //! 的 `Drop` 在**每条**退出路径（成功 / 错误提前返回 / 意外 panic 展开）恢复剪贴板
 //! 原始内容，绝不把哨兵或译文泄漏在剪贴板里。快照是三态的：`Text` 恢复原文本、

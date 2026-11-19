@@ -113,5 +113,4 @@ jobs:
           name: build-output
           path: |
             dist/
-            dist-electron/
           retention-days: 7

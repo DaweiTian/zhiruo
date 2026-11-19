@@ -190,8 +190,6 @@ src-tauri/    Tauri 2（Rust）主进程：录音、ASR、快捷键、LLM、历�
 src/          React 渲染层（Vite）：组件、页面、HUD 窗口、共享类型
 website/      Astro 项目网站，部署在 Cloudflare Workers Static Assets
 public/       桌面渲染层使用的运行时资源
-electron/     遗留 Electron 主进程/preload/shared 代码——仅作功能参考，
-              不参与构建（已被 Tauri 主进程取代）
 ```
 
 各目录内的 README 提供了更详细的职责地图。追踪运行时或界面改动时，可以先阅读

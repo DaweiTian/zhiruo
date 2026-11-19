@@ -21,7 +21,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
 
   // ============================================
-  // 2. 全局变量配置（Electron 多环境支持）
+  // 2. 全局变量配置（渲染层 + Node 脚本）
   // ============================================
   {
     languageOptions: {
@@ -29,7 +29,7 @@ export default tseslint.config(
       sourceType: 'module',
       globals: {
         ...globals.browser, // React 渲染进程
-        ...globals.node, // Electron 主进程
+        ...globals.node, // 构建/图标脚本
         ...globals.es2021,
       },
       parserOptions: {
@@ -119,56 +119,10 @@ export default tseslint.config(
   },
 
   // ============================================
-  // 6. Electron 主进程特定配置
+  // 6. 本地辅助脚本（CommonJS）
   // ============================================
   {
-    files: ['electron/**/*.{js,ts}'],
-    rules: {
-      // 主进程允许 console
-      'no-console': 'off',
-
-      // 主进程可能需要 require
-      '@typescript-eslint/no-require-imports': 'off',
-
-      // Zhiruo ships without a stable Apple signing identity. Any safeStorage access can
-      // therefore block managed macOS Keychains, so keep OS credential stores out of runtime code.
-      'no-restricted-imports': [
-        'error',
-        {
-          paths: [
-            {
-              name: 'electron',
-              importNames: ['safeStorage'],
-              message:
-                'Persist API keys through ConfigManager; do not access OS credential stores.',
-            },
-          ],
-        },
-      ],
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: "MemberExpression[property.name='safeStorage']",
-          message: 'Do not access Electron safeStorage or the macOS Keychain.',
-        },
-        {
-          selector: "MemberExpression[computed=true][property.value='safeStorage']",
-          message: 'Do not access Electron safeStorage or the macOS Keychain.',
-        },
-        {
-          selector:
-            "VariableDeclarator[init.callee.name='require'][init.arguments.0.value='electron'] > ObjectPattern > Property[key.name='safeStorage']",
-          message: 'Do not destructure Electron safeStorage or access the macOS Keychain.',
-        },
-      ],
-    },
-  },
-
-  // ============================================
-  // 6b. 本地辅助脚本（CommonJS）
-  // ============================================
-  {
-    files: ['scripts/**/*.cjs', 'src-tauri/icons-src/**/*.cjs'],
+    files: ['src-tauri/icons-src/**/*.cjs'],
     rules: {
       '@typescript-eslint/no-require-imports': 'off',
     },
@@ -202,8 +156,6 @@ export default tseslint.config(
       'dist/',
       'src-tauri/target/',
       'src-tauri/gen/',
-      'dist-electron/',
-      'build/',
 
       // 依赖
       'node_modules/',
@@ -229,9 +181,6 @@ export default tseslint.config(
       'eslint.config.mjs',
       'prettier.config.mjs',
       'commitlint.config.js',
-
-      // Electron Builder 输出
-      'electron-builder-effective-config.yaml',
 
       // 日志
       '*.log',

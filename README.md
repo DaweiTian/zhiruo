@@ -238,8 +238,6 @@ src-tauri/    Tauri 2 (Rust) main process: audio, ASR, hotkeys, LLM workflows,
 src/          React renderer (Vite): components, pages, HUD windows, shared types
 website/      Astro marketing site deployed with Cloudflare Workers Static Assets
 public/       Runtime assets used by the desktop renderer
-electron/     Legacy Electron main/preload/shared code — functional reference only,
-              NOT part of the build (the Tauri main process replaced it)
 ```
 
 Directory-level README files provide a more detailed ownership map. Start with

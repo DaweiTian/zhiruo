@@ -422,8 +422,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   overlay + session，`transcription` / `error` → main，`inject-fallback` → overlay，
   `picker-update` → picker，`hub-update` → hub，录音器控制 / `config-updated` →
   background；`app-language-changed` 保持广播（各窗换语言，载荷无内容）。
-- `src/translate.rs` - **选区动作编排**（翻译快捷键与选区 hub 共用；移植自遗留 Electron
-  蓝本 `electron/main/translation/translator.ts`）：剪贴板快照 → 模拟 Ctrl+C +
+- `src/translate.rs` - **选区动作编排**（翻译快捷键与选区 hub 共用；历史蓝本为原
+  Electron 时代 `translator.ts`，electron/ 已清理）：剪贴板快照 → 模拟 Ctrl+C +
   哨兵写入/超时轮询读取判定选区 → LLM 处理（[`SelectionAction`]：翻译 /
   润色改写 / 解释说明，见 `llm.rs` 对应调用）→ 输出（改写类粘贴前复查选区未变 →
   译文入剪贴板 + 模拟粘贴覆盖选区、原文经 `HistoryManager::add_selection_original`

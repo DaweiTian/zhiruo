@@ -312,6 +312,10 @@ export const tauriApi = {
   getPickerData: () => invoke<PickerUpdatePayload>('get_picker_data'),
   closePickerPanel: () => invoke('close_picker_panel'),
   pickerInsert: (text: string) => invoke('picker_insert', { text }),
+  // 拖面板右缘把手调宽（逻辑 px）：拖动中传 `persist: false` 只调形，
+  // 松手传 `true` 落盘 `picker.panelWidth`。返回实际生效（夹取后）的宽度。
+  setPickerWidth: (width: number, persist: boolean) =>
+    invoke<number>('set_picker_width', { width, persist }),
   onPickerUpdate: (cb: (payload: PickerUpdatePayload) => void): Unsub =>
     listenAsync('picker-update', cb),
   getSnippetCandidates: () => invoke<string[]>('get_snippet_candidates'),

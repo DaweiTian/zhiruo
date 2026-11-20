@@ -510,6 +510,14 @@ describe('picker config normalization', () => {
     expect(normalizePickerConfig({ userSnippets: [long] }).userSnippets).toEqual([long])
     expect(normalizePickerConfig({ userSnippets: ['x'.repeat(257)] }).userSnippets).toEqual([])
   })
+
+  it('clamps the panel width into 240–720 and falls back to 320', () => {
+    expect(normalizePickerConfig({ panelWidth: 480 }).panelWidth).toBe(480)
+    expect(normalizePickerConfig({ panelWidth: 100 }).panelWidth).toBe(240)
+    expect(normalizePickerConfig({ panelWidth: 5000 }).panelWidth).toBe(720)
+    expect(normalizePickerConfig({ panelWidth: Number.NaN }).panelWidth).toBe(320)
+    expect(normalizePickerConfig().panelWidth).toBe(320)
+  })
 })
 
 describe('inject config normalization', () => {

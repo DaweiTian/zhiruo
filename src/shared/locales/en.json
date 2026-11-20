@@ -533,6 +533,7 @@
     "emptySnippets": "No snippets yet. Add them in Settings, pin clipboard entries, or turn on “Learn from history”.",
     "emptyClipboard": "Nothing copied yet. Copied text will show up here.",
     "hint": "↑↓ move · Enter insert · Delete remove · Esc close",
+    "resizeHint": "Drag to resize the panel width",
     "insertFailed": "Insert failed — the text is on your clipboard, paste it manually",
     "pin": "Pin to snippets",
     "unpin": "Unpin",

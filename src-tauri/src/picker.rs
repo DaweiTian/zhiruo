@@ -26,7 +26,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use tauri::{AppHandle, Manager, Runtime};
 
-/// 面板窗口的逻辑尺寸（与 `tauri.conf.json` 的 `picker` 条目一致）。
+/// 面板窗口的默认逻辑尺寸（与 `tauri.conf.json` 的 `picker` 条目一致）。
+/// 宽度可被用户拖右缘把手调整（`picker.panelWidth`，[`resize_picker_width`]），
+/// 打开时一律按持久化宽度落位——高度固定。
 pub const PICKER_WINDOW_W: f64 = 320.0;
 pub const PICKER_WINDOW_H: f64 = 380.0;
 
@@ -147,6 +149,13 @@ pub fn open_picker<R: Runtime>(app: &AppHandle<R>, focus: PickerFocus, cursor: (
         crate::events::session_error(app, &json!({ "message": "快速插入面板窗口不可用。" }));
         return;
     };
+    // 宽度记忆：每次打开都按持久化的 `picker.panelWidth` 落位（拖拽调宽只
+    // 改这一份），保证用户设置的大小一直有效。
+    let width = app
+        .try_state::<crate::state::AppState>()
+        .map(|s| crate::config::clamp_panel_width(s.config.load().picker.panel_width))
+        .unwrap_or(PICKER_WINDOW_W);
+    let _ = window.set_size(tauri::LogicalSize::new(width, PICKER_WINDOW_H));
     let (px, py) = cursor;
     place_picker_window(app, &window, (px as f64, py as f64));
     crate::windowing::harden_overlay_window(&window);
@@ -264,6 +273,30 @@ fn place_picker_window<R: Runtime>(
     } else {
         let _ = window.set_position(tauri::PhysicalPosition::new(cx as i32, cy as i32));
     }
+}
+
+/// 拖拽调宽（渲染层 `set_picker_width`）：夹取 240–720，再按工作区右缘
+/// 限宽（左上角锚定不动，放不下时宁可窄一点也不把窗口顶出屏幕），`set_size`
+/// 后用当前位置重跑一次钳制。返回实际生效的逻辑宽度；持久化由命令侧
+/// （`persist`）负责。
+pub(crate) fn resize_picker_width<R: Runtime>(app: &AppHandle<R>, width: f64) -> f64 {
+    let mut applied = crate::config::clamp_panel_width(width);
+    let Some(window) = app.get_webview_window(crate::windowing::PICKER_WINDOW_LABEL) else {
+        return applied;
+    };
+    let anchor = window
+        .outer_position()
+        .map(|pos| (pos.x as f64, pos.y as f64))
+        .unwrap_or((0.0, 0.0));
+    if let Some(frame) = crate::commands::OverlayFrame::resolve(app, &window, anchor.0, anchor.1) {
+        let max_w = frame.max_width_keeping_left(anchor.0);
+        if max_w.is_finite() && max_w > 0.0 {
+            applied = applied.min(max_w).max(crate::config::PANEL_WIDTH_MIN);
+        }
+    }
+    let _ = window.set_size(tauri::LogicalSize::new(applied, PICKER_WINDOW_H));
+    place_picker_window(app, &window, anchor);
+    applied
 }
 
 #[cfg(windows)]

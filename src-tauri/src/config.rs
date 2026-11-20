@@ -137,6 +137,15 @@ pub struct PickerConfig {
     /// API key 等一切设置）。invoke 边界的严格校验在 [`normalize_user_snippets`]。
     #[serde(default, deserialize_with = "de_lenient_user_snippets")]
     pub user_snippets: Vec<String>,
+    /// 面板窗口的逻辑宽度（拖右缘把手调整，[`clamp_panel_width`] 夹取
+    /// 240–720）。加载走 [`de_lenient_panel_width`]：手改非法值退回默认宽
+    /// 而不是让整份配置反序列化失败（[`de_lenient_clipboard_limit`] 同一
+    /// 理由）。
+    #[serde(
+        default = "default_panel_width",
+        deserialize_with = "de_lenient_panel_width"
+    )]
+    pub panel_width: f64,
 }
 
 impl Default for PickerConfig {
@@ -150,12 +159,31 @@ impl Default for PickerConfig {
             clipboard_limit: default_clipboard_limit(),
             learn_snippets: true,
             user_snippets: Vec::new(),
+            panel_width: default_panel_width(),
         }
     }
 }
 
 fn default_clipboard_limit() -> u32 {
     30
+}
+
+/// 面板宽度的合法区间（逻辑 px）：太窄挤不下正文，太宽失了「速插」形态。
+pub const PANEL_WIDTH_MIN: f64 = 240.0;
+pub const PANEL_WIDTH_MAX: f64 = 720.0;
+
+fn default_panel_width() -> f64 {
+    crate::picker::PICKER_WINDOW_W
+}
+
+/// 夹取面板宽度到 [`PANEL_WIDTH_MIN`]..=[PANEL_WIDTH_MAX`]（取整）；非有限
+/// 值退回默认宽。拖拽调宽、打开应用与 merge 三处共用同一口径。
+pub fn clamp_panel_width(width: f64) -> f64 {
+    if width.is_finite() {
+        width.round().clamp(PANEL_WIDTH_MIN, PANEL_WIDTH_MAX)
+    } else {
+        default_panel_width()
+    }
 }
 
 fn default_hub_button() -> String {
@@ -248,6 +276,21 @@ where
         }
     }
     Ok(terms)
+}
+
+/// `panelWidth` 的宽容加载：数字夹取 [`PANEL_WIDTH_MIN`]..=[PANEL_WIDTH_MAX`]，
+/// 其余（字符串 / null / 缺失形状）退回默认宽。与
+/// [`de_lenient_clipboard_limit`] 同一理由：手改配置不能拖垮整份配置。
+/// invoke / merge 边界走 [`normalize_panel_width`]。
+fn de_lenient_panel_width<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_f64()
+        .map(clamp_panel_width)
+        .unwrap_or_else(default_panel_width))
 }
 
 /// `userGlossary` 的宽容加载：形状非法整体退空表；非法条目（非字符串 / 超
@@ -1026,6 +1069,12 @@ pub fn normalize_clipboard_limit(raw: &serde_json::Value) -> Option<u32> {
     raw.as_u64().map(|n| n.clamp(5, 100) as u32)
 }
 
+/// `panelWidth` 的 merge 边界归一：数字夹取 240–720，其余（字符串 / null）
+/// 忽略（保留旧值）——与 [`normalize_clipboard_limit`] 同一纪律。
+pub fn normalize_panel_width(raw: &serde_json::Value) -> Option<f64> {
+    raw.as_f64().map(clamp_panel_width)
+}
+
 /// invoke 边界校验常用词（`picker.userSnippets`）：形状非法/超限报错，
 /// 空串与重复静默清洗。上限 100 条 × 256 字符（0.11 从 64 放宽，剪贴板
 /// 固定进常用词要装得下整句；与 [`normalize_user_glossary`] 同一纪律）。
@@ -1418,6 +1467,13 @@ impl ConfigStore {
                         merged.picker.user_snippets = normalize_user_snippets(Some(v))?;
                     }
                 }
+                // 面板宽度：拖右缘把手的落盘路径（`set_picker_width` 的
+                // `persist`）。数字夹取 240–720，非法输入忽略保留旧值。
+                if let Some(v) = obj.get("panelWidth") {
+                    if let Some(width) = normalize_panel_width(v) {
+                        merged.picker.panel_width = width;
+                    }
+                }
             }
         }
 
@@ -1625,6 +1681,7 @@ mod tests {
         assert!(merged.picker.enabled);
         assert_eq!(merged.picker.x1_action, "snippets");
         assert_eq!(merged.picker.clipboard_limit, 30);
+        assert_eq!(merged.picker.panel_width, 320.0);
 
         let merged = store
             .merge(&serde_json::json!({
@@ -1633,7 +1690,8 @@ mod tests {
                     "x1Action": "both",
                     "hubButton": "x2",
                     "clipboardLimit": 2,
-                    "userSnippets": ["好嘞"]
+                    "userSnippets": ["好嘞"],
+                    "panelWidth": 480.6
                 }
             }))
             .unwrap();
@@ -1644,6 +1702,7 @@ mod tests {
         assert_eq!(merged.picker.hub_button, "none");
         assert_eq!(merged.picker.clipboard_limit, 5); // clamped
         assert_eq!(merged.picker.user_snippets, vec!["好嘞".to_string()]);
+        assert_eq!(merged.picker.panel_width, 481.0); // rounded
 
         // 未提及的字段保留已存值；非法动作 / 非法侧键保留旧值。
         let merged = store
@@ -1652,10 +1711,32 @@ mod tests {
         assert_eq!(merged.picker.x1_action, "both");
         assert_eq!(merged.picker.x2_action, "hub");
         assert!(!merged.picker.enabled);
+        assert_eq!(merged.picker.panel_width, 481.0);
+
+        // 面板宽度越界夹取；非法类型忽略保留旧值。
+        let merged = store
+            .merge(&serde_json::json!({ "picker": { "panelWidth": 5000 } }))
+            .unwrap();
+        assert_eq!(merged.picker.panel_width, 720.0);
+        let merged = store
+            .merge(&serde_json::json!({ "picker": { "panelWidth": "wide" } }))
+            .unwrap();
+        assert_eq!(merged.picker.panel_width, 720.0);
 
         assert!(store
             .merge(&serde_json::json!({ "picker": { "userSnippets": [42] } }))
             .is_err());
+    }
+
+    #[test]
+    fn clamp_panel_width_rounds_and_bounds() {
+        assert_eq!(clamp_panel_width(320.0), 320.0);
+        assert_eq!(clamp_panel_width(239.9), 240.0);
+        assert_eq!(clamp_panel_width(100.0), 240.0);
+        assert_eq!(clamp_panel_width(4000.0), 720.0);
+        assert_eq!(clamp_panel_width(412.4), 412.0);
+        assert_eq!(clamp_panel_width(f64::NAN), 320.0);
+        assert_eq!(clamp_panel_width(f64::INFINITY), 320.0);
     }
 
     #[test]

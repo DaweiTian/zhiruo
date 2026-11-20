@@ -472,7 +472,10 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   开关语义 toggle、贴指针弹出（`OverlayFrame` 工作区夹取，约 320×380）、`picker-update`
   事件下发常用词 + 最近剪贴板（挂载拉 `get_picker_data` 兜底首开竞态）；落点
   `snippets | clipboard | both | hub`（X1/X2 各自配置；`hub` 不开本面板，
-  `mouse.rs` 路由到选区 hub）。**键盘导航需要输入焦点**
+  `mouse.rs` 路由到选区 hub）。**面板宽度可调**：渲染层拖右缘把手走
+  `set_picker_width`（`resize_picker_width` 夹取 240–720 且不顶出工作区右缘，
+  `persist` 落盘 `picker.panelWidth`），打开一律按持久化宽度 `set_size` 再定位
+  ——用户设置的大小跨开合/重启一直有效；高度固定 380。**键盘导航需要输入焦点**
   （与 hub 的 non-focusable 相反）——插入前 `restore_foreground_if` 把焦点还给
   先前应用（Alt 敲击解锁 + `SetForegroundWindow`），否则 Ctrl/V 会打进面板自己；
   开/关 + 前台快照 + 落点由一把小锁（`PickerSession`）+ **代际守卫**罩住，
@@ -492,7 +495,8 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   500 字；作用于整理工与选区润色改写）；`picker` 段含快速插入面板
   （侧键 X1/X2 落点 `snippets | clipboard | both | hub`、剪贴板采集、
   常用词 `userSnippets`，normalizer 与 userGlossary
-  同一纪律、单条 256 字符；0.10.x 的 `hubButton` 遗留键加载时迁移成落点 `hub`，
+  同一纪律、单条 256 字符、面板宽度 `panelWidth`（240–720 夹取，拖右缘把手
+  落盘）；0.10.x 的 `hubButton` 遗留键加载时迁移成落点 `hub`，
   旧语义 hub 压过落点故行为等价）；`inject` 段含文本注入模式
   （`mode ∈ auto | paste | type | clipboard`，设计 2.2 兼容回退，段级与字段级
   双层宽容加载）；手改易错字段走宽容加载 `de_lenient_*`，非法值退默认不整份冲掉）。**配置写入线程安全**：

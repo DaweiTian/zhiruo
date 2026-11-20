@@ -207,6 +207,14 @@ impl OverlayFrame {
         )
     }
 
+    /// Widest logical width the window may grow to while its left edge stays at
+    /// physical `x` (work-area right edge minus `x`, in this window's CSS px).
+    /// The picker's drag-to-resize uses this instead of poking at the private
+    /// area fields.
+    pub(crate) fn max_width_keeping_left(&self, x: f64) -> f64 {
+        (self.area_x + self.area_w - x) / self.window_scale
+    }
+
     /// Legacy clamp (pre-capsule window-frame snapping and the bottom-center
     /// default): keep the whole window inside the work area, so the default /
     /// reset placement is always fully visible. An oversized window degrades
@@ -2266,6 +2274,32 @@ pub fn get_picker_data() -> Value {
 pub fn close_picker_panel(app: AppHandle) -> Result<(), String> {
     crate::picker::close_picker(&app);
     Ok(())
+}
+
+/// 拖拽面板右缘把手调宽（逻辑 px）。命令总是作用于 `picker` 窗口本身，
+/// 与 [`set_overlay_size`] 同一纪律——误路由的调用改不到别的窗口。
+/// 宽度在 [`crate::picker::resize_picker_width`] 夹取（240–720 且不顶出
+/// 工作区右缘），返回实际生效值。`persist = true`（拖拽结束）把宽度落盘到
+/// `picker.panelWidth`——只夹 240–720，**不掺工作区临时限宽**（贴屏边拖宽
+/// 被限住是当场几何限制，不该污染记忆值，下次开在空旷处仍是用户要的宽）；
+/// 拖拽过程中传 `false` 只调形不写盘。
+///
+/// Renderer contract (`src/lib/tauri-api.ts`): invoke name `set_picker_width`,
+/// arguments `{ width, persist }`.
+#[tauri::command]
+pub fn set_picker_width(window: WebviewWindow, width: f64, persist: bool) -> Result<f64, String> {
+    if !width.is_finite() {
+        return Err("Invalid picker width".into());
+    }
+    let app = window.app_handle();
+    let applied = crate::picker::resize_picker_width(app, width);
+    if persist {
+        let state = app.state::<AppState>();
+        state.config.merge(&serde_json::json!({
+            "picker": { "panelWidth": crate::config::clamp_panel_width(width) }
+        }))?;
+    }
+    Ok(applied)
 }
 
 /// 点选条目注入到当前光标（按 `inject.mode` 分派，设计 2.2）。注入前把

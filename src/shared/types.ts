@@ -207,6 +207,8 @@ export interface PickerConfig {
   learnSnippets: boolean
   /** 手动管理的常用词。 */
   userSnippets: string[]
+  /** 面板窗口逻辑宽度（240–720，拖面板右缘把手调整，持久记忆）。 */
+  panelWidth: number
 }
 
 /** 文本注入模式（功能方案设计 2.2）：`auto` = paste → type → clipboard 逐级兜底。 */

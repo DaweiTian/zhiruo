@@ -280,6 +280,7 @@ pub fn run() {
             commands::copy_text,
             commands::get_picker_data,
             commands::close_picker_panel,
+            commands::set_picker_width,
             commands::picker_insert,
             commands::get_snippet_candidates,
             commands::confirm_snippet_candidate,

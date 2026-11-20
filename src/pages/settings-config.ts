@@ -222,6 +222,7 @@ export function normalizeInjectConfig(raw?: Partial<InjectConfig>): InjectConfig
 
 /**
  * 快速插入面板配置归一：非法落点退回默认，条数上限夹取 5–100，
+ * 面板宽度夹取 240–720（默认 320，与 Rust `clamp_panel_width` 同口径），
  * 常用词清洗与 `llmRefine.userGlossary` 同一纪律（trim / 去重 / 100 条），
  * 单条上限 256（`MAX_SNIPPET_LENGTH`）。0.10.x 的 `hubButton` 由 Rust 侧
  * 迁移进落点 `hub`，这里不再归一该字段。
@@ -233,6 +234,10 @@ export function normalizePickerConfig(raw?: Partial<PickerConfig>): PickerConfig
     typeof raw?.clipboardLimit === 'number' && Number.isFinite(raw.clipboardLimit)
       ? Math.min(100, Math.max(5, Math.round(raw.clipboardLimit)))
       : 30
+  const panelWidth =
+    typeof raw?.panelWidth === 'number' && Number.isFinite(raw.panelWidth)
+      ? Math.min(720, Math.max(240, Math.round(raw.panelWidth)))
+      : 320
   return {
     enabled: raw?.enabled ?? true,
     x1Action: pickAction(raw?.x1Action, 'snippets'),
@@ -241,6 +246,7 @@ export function normalizePickerConfig(raw?: Partial<PickerConfig>): PickerConfig
     clipboardLimit: limit,
     learnSnippets: raw?.learnSnippets ?? true,
     userSnippets: normalizeUserGlossary(raw?.userSnippets, MAX_SNIPPET_LENGTH),
+    panelWidth,
   }
 }
 

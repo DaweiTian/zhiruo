@@ -17,7 +17,14 @@
  * （面板首开时事件可能先于监听器到达）。使用计数存 localStorage
  * （`voicekey.picker.usage`，文本 → 次数），只影响排序，不过桥。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
@@ -176,6 +183,29 @@ export function Picker() {
     void window.electronAPI.closePickerPanel().catch(() => {})
   }, [])
 
+  // 面板宽度拖拽（右缘把手）：拖动中实时调宽（只调形不落盘），松手把最终
+  // 宽度持久化到 `picker.panelWidth`（Rust 夹取 240–720，返回生效值）。
+  // 指针捕获保证拖出窗口（如拖向副屏）仍能收到 move/up；捕获事件冒泡到
+  // window 监听器，与「没捕获上但指针仍在窗口内」走同一处理器。
+  const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const startX = event.clientX
+    const startW = window.innerWidth
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const widthAt = (ev: PointerEvent) => startW + (ev.clientX - startX)
+    const onMove = (ev: PointerEvent) => {
+      void window.electronAPI.setPickerWidth(widthAt(ev), false)
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      void window.electronAPI.setPickerWidth(widthAt(ev), true)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }, [])
+
   // 剪贴板条目「固定」：移动进常用词（Rust 侧移出剪贴板历史）。
   // 长度 / 容量在前端预检给本地化提示；Rust 再兜一层 invoke 边界校验。
   const pin = useCallback(
@@ -262,6 +292,20 @@ export function Picker() {
         close()
       }}
     >
+      {/* 右缘拖拽把手：调整面板宽度。独立于面板卡片之外的窗缘空白带，
+          点击/右键不冒泡到收起。 */}
+      <div
+        className="absolute inset-y-0 right-0 flex w-2.5 cursor-ew-resize items-center justify-center"
+        title={t('picker.resizeHint')}
+        onPointerDown={beginResize}
+        onClick={(event) => event.stopPropagation()}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+      >
+        <span className="h-8 w-px rounded-full bg-border/70" />
+      </div>
       <div
         className="absolute inset-2 flex flex-col overflow-hidden rounded-xl bg-popover/95 text-popover-foreground shadow-xl ring-1 ring-border"
         onClick={(event) => event.stopPropagation()}
@@ -359,14 +403,15 @@ function Section({
                 <button
                   type="button"
                   tabIndex={-1}
-                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left"
+                  className="flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left"
                   onClick={() => onInsert(item)}
                 >
-                  <span className="min-w-0 flex-1 truncate whitespace-pre-wrap break-words">
+                  <span className="w-full min-w-0 truncate whitespace-pre-wrap break-words">
                     {item.text}
                   </span>
+                  {/* 时间标签在条目底部自成一行——挂右侧太挤正文宽度（0.15.x）。 */}
                   {showTime && item.timeLabel && (
-                    <span className="shrink-0 text-[9px] text-muted-foreground">
+                    <span className="text-[9px] leading-none text-muted-foreground">
                       {item.timeLabel}
                     </span>
                   )}

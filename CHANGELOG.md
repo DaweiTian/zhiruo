@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.16.0](https://github.com/DaweiTian/zhiruo/compare/v0.15.0...v0.16.0) (2026-11-20)
+
+快速插入面板两处体验优化：宽度可自定义且持久记忆，时间标签让位正文宽度。
+
+### Features
+
+- **picker:** 面板右缘拖拽把手自定义宽度（240–720 夹取），拖动中只调形、松手
+  持久化到 `picker.panelWidth`，每次打开按记忆宽度弹出；贴屏边拖宽被工作区限住
+  是当场几何限制，不污染记忆值
+- **picker:** 最近剪贴板条目的相对时间标签（「N 分钟前」）从正文右侧移到条目
+  底部自成一行，正文独占整行宽度
+
+### Notes
+
+- 配置新增 `picker.panelWidth`（旧配置缺键自动取默认 320，无迁移成本）；面板
+  高度仍固定 380
+
 ## [0.15.0](https://github.com/DaweiTian/zhiruo/compare/v0.14.0...v0.15.0) (2026-11-18)
 
 全库横切审计（安全隐私 / 跨模块交互 / 一致性三路，4 HIGH / 10 MEDIUM / 11 LOW）的

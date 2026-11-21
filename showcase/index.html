@@ -112,8 +112,12 @@
     font-size: 0.88rem;
     color: var(--ink-soft);
   }
-  .nav-links a { position: relative; padding: 4px 0; transition: color 0.25s; }
-  .nav-links a::after {
+  .nav-links > a:not(.nav-cta) {
+    position: relative;
+    padding: 4px 0;
+    transition: color 0.25s;
+  }
+  .nav-links > a:not(.nav-cta)::after {
     content: "";
     position: absolute;
     left: 0; bottom: 0;
@@ -123,8 +127,8 @@
     transform-origin: left;
     transition: transform 0.3s ease;
   }
-  .nav-links a:hover { color: var(--olive); }
-  .nav-links a:hover::after { transform: scaleX(1); }
+  .nav-links > a:not(.nav-cta):hover { color: var(--olive); }
+  .nav-links > a:not(.nav-cta):hover::after { transform: scaleX(1); }
   .nav-cta {
     display: inline-flex;
     align-items: center;
@@ -138,7 +142,6 @@
     letter-spacing: 0.02em;
     transition: transform 0.25s, background 0.25s, box-shadow 0.25s;
   }
-  .nav-cta::after { display: none; }
   .nav-cta:hover {
     background: var(--olive);
     color: var(--cream) !important;
@@ -734,6 +737,26 @@
     letter-spacing: 0.08em;
   }
   .foot-brand svg { width: 26px; height: 26px; border-radius: 7px; }
+  .foot-filing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px 22px;
+    margin-top: 22px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .foot-filing a {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    transition: color 0.25s;
+  }
+  .foot-filing a:hover { color: var(--olive); }
+  .foot-filing svg { width: 15px; height: 15px; opacity: 0.75; }
 
   /* ============ 滚动浮现（无 JS 时保持可见） ============ */
   html.js .reveal {
@@ -1124,6 +1147,16 @@
       <a href="https://github.com/DaweiTian/zhiruo/issues" target="_blank" rel="noopener">反馈</a>
     </div>
     <div>MIT License · © Zhiruo contributors</div>
+  </div>
+  <div class="wrap foot-filing">
+    <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a15 15 0 0 1 0 18" /><path d="M12 3a15 15 0 0 0 0 18" /></svg>
+      宁ICP备2026000986号
+    </a>
+    <a href="https://beian.mps.gov.cn/#/query/webSearch?code=64030002260026" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Z" /><path d="m9 12 2 2 4-4" /></svg>
+      宁公网安备64030002260026号
+    </a>
   </div>
 </footer>
 

@@ -60,4 +60,5 @@ tauri-*.png
 
 # 浏览器 QA 快照/截图
 .playwright-cli/
+.playwright-mcp/
 output/

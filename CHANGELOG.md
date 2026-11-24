@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.17.0](https://github.com/DaweiTian/zhiruo/compare/v0.16.0...v0.17.0) (2026-11-24)
+
+快插面板页签化改版：剪贴板 / 常用词分页签呈现，配一轮 UI 与动效打磨。
+
+### Features
+
+- **picker:** 顶部页签切换「剪贴板 / 常用词」（默认剪贴板页签，←/→ 可切换），
+  单页签独占列表区——常用词再多也不会把剪贴板顶出可视区；落点决定初始页签
+  （X1 → 常用词 / X2 → 剪贴板 / both = 默认剪贴板），目标页签为空退到有货页签
+- **picker:** 面板 UI 与动效改版——段控滑块页签 + 条目数角标、卡片每次打开淡入
+  放大、页签内容按切换方向滑入、条目错峰入场、动作按钮 hover / 选中时淡入、
+  空状态图标化；`prefers-reduced-motion` 一律门禁
+- **website:** 中英两页页脚补备案信息（ICP / 公安）并接入备案图标
+
+### Notes
+
+- `picker-update` 载荷新增 `gen`（打开代际）：渲染层据此区分面板重开（重播入场
+  动画）与同代数据刷新（删除 / 固定触发，不重播）
+- 设置项侧键落点「全部显示」文案改为「默认页签（剪贴板）」（`both` 取值不变）
+- 设计文档归拢到 `docs/`（`功能方案设计.md` / `DESIGN.md`），代码注释引用同步
+
 ## [0.16.0](https://github.com/DaweiTian/zhiruo/compare/v0.15.0...v0.16.0) (2026-11-20)
 
 快速插入面板两处体验优化：宽度可自定义且持久记忆，时间标签让位正文宽度。

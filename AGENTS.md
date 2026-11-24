@@ -98,6 +98,9 @@ voicekey/
     index.css        Tailwind base and theme variables.
   website/           Astro static marketing site (Cloudflare deploy).
   public/            Desktop app static assets (PCM worklet, app icon).
+  docs/              Design docs: 功能方案设计 (product spec, cited by code
+                     comments) + DESIGN (Tauri rewrite design).
+  showcase/          Single-file project intro page (personal homepage).
 ```
 
 Key root config files:

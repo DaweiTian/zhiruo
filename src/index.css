@@ -1109,33 +1109,23 @@ html.dark .vk-seg-plate {
 
 /* ============================================================
    快速插入面板（picker）动效
+   注意：窗口 show 先于 picker-update 到达，面板在动效开始前已可见——
+   任何「从 opacity 0 起播」的入场都会闪一帧（0.17.0 的卡片入场就是这么
+   闪的）。打开反馈改走 TSX 里仅 transform 的 WAAPI 弹入；此处淡入类动效
+   一律用 `data-anim='on'` 门禁在「用户手动切页签」才播。
    ============================================================ */
-
-/* 面板卡片入场：每次打开（`gen` 变化重挂）从下方淡入并轻微放大 */
-.picker-card-in {
-  animation: picker-card-in 200ms cubic-bezier(0.23, 1, 0.32, 1) both;
-}
-@keyframes picker-card-in {
-  0% {
-    opacity: 0;
-    transform: translateY(6px) scale(0.97);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
 
 /* 页签滑块：段控指示器跟随切换平移 */
 .picker-tab-pill {
   transition: transform 300ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-/* 页签内容切换：向前（剪贴板 → 常用词）从右滑入，返回从左滑入 */
-.picker-tab-in[data-dir='fwd'] {
+/* 页签内容切换：向前（剪贴板 → 常用词）从右滑入，返回从左滑入。
+   仅手动切页签（data-anim='on'）；打开定落点走瞬切，不淡入。 */
+.picker-tab-in[data-anim='on'][data-dir='fwd'] {
   animation: picker-tab-fwd 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
-.picker-tab-in[data-dir='back'] {
+.picker-tab-in[data-anim='on'][data-dir='back'] {
   animation: picker-tab-back 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 @keyframes picker-tab-fwd {
@@ -1159,8 +1149,9 @@ html.dark .vk-seg-plate {
   }
 }
 
-/* 条目入场：逐条错峰淡入上移（延迟行内联设置，封顶 280ms） */
-.picker-item-in {
+/* 条目入场：逐条错峰淡入上移（延迟行内联设置，封顶 280ms），同样只跟
+   手动切页签走。 */
+.picker-tab-in[data-anim='on'] .picker-item-in {
   animation: picker-item-in 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 @keyframes picker-item-in {
@@ -1175,10 +1166,9 @@ html.dark .vk-seg-plate {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .picker-card-in,
-  .picker-item-in,
-  .picker-tab-in[data-dir='fwd'],
-  .picker-tab-in[data-dir='back'] {
+  .picker-tab-in[data-anim='on'][data-dir='fwd'],
+  .picker-tab-in[data-anim='on'][data-dir='back'],
+  .picker-tab-in[data-anim='on'] .picker-item-in {
     animation: none;
   }
   .picker-tab-pill {

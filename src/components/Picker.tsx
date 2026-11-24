@@ -16,8 +16,10 @@
  * - 点选条目 → `picker_insert`（Rust 先还焦点给先前应用再走 `inject_text`），
  *   插入后面板收起。
  *
- * 动效（`index.css` `picker-*`）：卡片每次打开（`gen` 变化）淡入放大重播，
- * 页签内容按切换方向滑入，条目错峰入场；均受 `prefers-reduced-motion` 门禁。
+ * 动效（`index.css` `picker-*` + 打开弹入用 WAAPI）：打开时卡片做**仅 transform**
+ * 的轻微弹入（不透明度恒 1——窗口 show 先于 picker-update 到达，可见后再从
+ * opacity 0 播必闪一帧，0.17.0 就栽在这）；页签切换才播方向滑入 + 条目错峰
+ * （`data-anim` 门禁）；均受 `prefers-reduced-motion` 门禁。
  *
  * 数据流：Rust `picker-update` 事件推送 + 挂载时 `getPickerData` 拉取兜底
  * （面板首开时事件可能先于监听器到达）。使用计数存 localStorage
@@ -112,13 +114,17 @@ export function Picker() {
   // 用户手动选择（键盘/鼠标）；null = 用页签首条。每次面板打开
   // （picker-update 到达）重置回 null，跟随新落点。
   const [touchedIndex, setTouchedIndex] = useState<number | null>(null)
-  // 打开代际（Rust `open_gen`）：变化 = 面板重新弹出，卡片重挂播入场动画；
+  // 打开代际（Rust `open_gen`）：变化 = 面板重新弹出，触发卡片弹入（WAAPI）；
   // 同代内的更新（删除 / 固定触发的 picker-update）不重播。
   const [openGen, setOpenGen] = useState(0)
+  // 页签切换动效门禁：仅用户手动切页签播滑入；打开（applyPayload 定落点）
+  // 即便换了页签也走无动效瞬切——可见后再淡入就是闪帧。
+  const [tabAnim, setTabAnim] = useState(false)
   // 相对时间标签的基准时刻：只在数据到达时取一次（事件回调里取当前时间，
   // 渲染期保持纯函数——react 纯度规则禁止渲染中调 Date.now）。
   const [now, setNow] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
 
   const applyPayload = useCallback((payload: PickerUpdatePayload) => {
     const nextSnippets = Array.isArray(payload.snippets) ? payload.snippets : []
@@ -127,6 +133,7 @@ export function Picker() {
     setClipboard(nextClipboard)
     setNow(Date.now())
     setTouchedIndex(null)
+    setTabAnim(false)
     if (payload.focus) {
       const focus = toFocus(payload.focus)
       setActiveTab(tabForFocus(focus, nextSnippets.length, nextClipboard.length))
@@ -194,11 +201,23 @@ export function Picker() {
     (tab: PickerTab) => {
       if (tab === activeTab) return
       setTabDir(tab === 'snippets' ? 'fwd' : 'back')
+      setTabAnim(true)
       setActiveTab(tab)
       setTouchedIndex(null)
     },
     [activeTab],
   )
+
+  // 打开反馈：卡片做仅 transform 的轻微弹入。绝不动 opacity——窗口 show 先于
+  // picker-update 到达，面板此刻已可见，从透明度 0 重播必闪一帧（0.17.0 教训）。
+  useEffect(() => {
+    if (openGen === 0) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    cardRef.current?.animate(
+      [{ transform: 'translateY(5px) scale(0.985)' }, { transform: 'translateY(0) scale(1)' }],
+      { duration: 150, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },
+    )
+  }, [openGen])
 
   const insert = useCallback(
     (item: FlatItem | undefined) => {
@@ -351,10 +370,10 @@ export function Picker() {
       >
         <span className="h-8 w-px rounded-full bg-border/70" />
       </div>
-      {/* key = 打开代际：每次重新弹出重挂卡片，重播入场动画。 */}
+      {/* 卡片本体不随打开重挂——重挂会把入场动画重播到已可见的窗口上（闪帧）。 */}
       <div
-        key={openGen}
-        className="picker-card-in absolute inset-2 flex flex-col overflow-hidden rounded-xl bg-popover/95 text-popover-foreground shadow-xl ring-1 ring-border backdrop-blur-md"
+        ref={cardRef}
+        className="absolute inset-2 flex flex-col overflow-hidden rounded-xl bg-popover/95 text-popover-foreground shadow-xl ring-1 ring-border backdrop-blur-md"
         onClick={(event) => event.stopPropagation()}
       >
         {/* 页签栏：段控样式，滑块跟随切换；条目数进角标（不再占列表区标题行）。 */}
@@ -384,11 +403,12 @@ export function Picker() {
             />
           </div>
         </div>
-        {/* 内容区：key = 页签，切换时按方向滑入 + 条目错峰入场。 */}
+        {/* 内容区：key = 页签；滑入 + 条目错峰仅在手动切页签（data-anim）时播。 */}
         <div
           key={activeTab}
           ref={listRef}
           data-dir={tabDir}
+          data-anim={tabAnim ? 'on' : 'off'}
           className="picker-tab-in flex-1 overflow-y-auto px-2 py-1.5"
         >
           {items.length === 0 ? (

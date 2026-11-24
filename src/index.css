@@ -1106,3 +1106,82 @@ html.dark .vk-seg-plate {
     transform: none;
   }
 }
+
+/* ============================================================
+   快速插入面板（picker）动效
+   ============================================================ */
+
+/* 面板卡片入场：每次打开（`gen` 变化重挂）从下方淡入并轻微放大 */
+.picker-card-in {
+  animation: picker-card-in 200ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes picker-card-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 页签滑块：段控指示器跟随切换平移 */
+.picker-tab-pill {
+  transition: transform 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* 页签内容切换：向前（剪贴板 → 常用词）从右滑入，返回从左滑入 */
+.picker-tab-in[data-dir='fwd'] {
+  animation: picker-tab-fwd 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.picker-tab-in[data-dir='back'] {
+  animation: picker-tab-back 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes picker-tab-fwd {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes picker-tab-back {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 条目入场：逐条错峰淡入上移（延迟行内联设置，封顶 280ms） */
+.picker-item-in {
+  animation: picker-item-in 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes picker-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .picker-card-in,
+  .picker-item-in,
+  .picker-tab-in[data-dir='fwd'],
+  .picker-tab-in[data-dir='back'] {
+    animation: none;
+  }
+  .picker-tab-pill {
+    transition: none;
+  }
+}

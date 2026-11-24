@@ -38,6 +38,7 @@ website/dist/
 .codex/
 .codex-remote-attachments/
 designs/
+.ui-verify/
 skills-lock.json
 systemprompt.txt
 

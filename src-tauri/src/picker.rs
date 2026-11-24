@@ -5,11 +5,14 @@
 //! * **手势**：X1/X2 全接管，单击即开（`mouse.rs` 吞事件后 enqueue 到
 //!   [`toggle`]）；面板打开时再按一次侧键 = 收起（开关语义，不叠层）。
 //! * **面板**：新窗口贴鼠标指针弹出（约 320×380），整只钳进锚点所在屏幕
-//!   的工作区（复用 [`OverlayFrame`] 的夹取）；上下两区——常用词 /
-//!   最近剪贴板；方向键 + Enter 键盘速选，Esc / 点外 / 再按侧键收起。
-//! * **落点**：X1 默认「常用词」区、X2 默认「剪贴板」区；`picker.x1Action`
+//!   的工作区（复用 [`OverlayFrame`] 的夹取）；顶部页签切换「剪贴板 /
+//!   常用词」（默认剪贴板页签）——单页签独占列表区，常用词再多也不会把
+//!   剪贴板顶出可视区；←/→ 切页签，方向键 + Enter 键盘速选，Esc / 点外 /
+//!   再按侧键收起。
+//! * **落点**：X1 默认「常用词」页签、X2 默认「剪贴板」页签；`picker.x1Action`
 //!   / `picker.x2Action` 可改成 `snippets | clipboard | both | hub`
-//!   （`hub` 不开本面板，`mouse.rs` 路由到选区快捷 hub）。
+//!   （`both` = 默认剪贴板页签；`hub` 不开本面板，`mouse.rs` 路由到选区
+//!   快捷 hub）。
 //! * **注入**：点选条目走 `inject::inject_text_with_mode`（按 `inject.mode`
 //!   分派，设计 2.2 兼容回退）。插入前把前台窗口还给先前应用
 //!   （[`restore_foreground_if`]，代际守卫）——面板是可聚焦窗口（键盘导航
@@ -178,7 +181,7 @@ pub fn open_picker<R: Runtime>(app: &AppHandle<R>, focus: PickerFocus, cursor: (
         }
     }
 
-    let payload = picker_payload(focus);
+    let payload = picker_payload(focus, gen);
     crate::events::picker_update(app, &payload);
 }
 
@@ -229,9 +232,11 @@ pub(crate) fn current_generation() -> u64 {
     SESSION.lock().unwrap_or_else(PoisonError::into_inner).open_gen
 }
 
-/// 面板数据：落点 + 常用词 + 最近剪贴板（最新在前）。命令边界/事件载荷，
-/// 渲染层拿到的永远是形状正确的 JSON。
-fn picker_payload(focus: PickerFocus) -> Value {
+/// 面板数据：落点 + 打开代际 + 常用词 + 最近剪贴板（最新在前）。命令边界/
+/// 事件载荷，渲染层拿到的永远是形状正确的 JSON。`gen`（`open_gen`）让
+/// 渲染层区分「面板重新弹出」（重播入场动画）与「同代内数据更新」
+/// （删除 / 固定后的刷新，不重播）。
+fn picker_payload(focus: PickerFocus, gen: u64) -> Value {
     let config = crate::config::ConfigStore::new().load();
     let snippets: Vec<&str> = config
         .picker
@@ -245,6 +250,7 @@ fn picker_payload(focus: PickerFocus) -> Value {
         .collect();
     json!({
         "focus": focus.as_str(),
+        "gen": gen,
         "snippets": snippets,
         "clipboard": clipboard,
     })
@@ -253,10 +259,11 @@ fn picker_payload(focus: PickerFocus) -> Value {
 /// 供 `commands.rs` 的 `get_picker_data` 使用（面板/设置页按需拉取；
 /// `focus = None` 时取当前会话的落点）。文件 I/O 在锁外（picker_payload）。
 pub(crate) fn current_payload(focus: Option<PickerFocus>) -> Value {
-    let focus = focus.unwrap_or_else(|| {
-        SESSION.lock().unwrap_or_else(PoisonError::into_inner).focus
-    });
-    picker_payload(focus)
+    let (focus, gen) = {
+        let session = SESSION.lock().unwrap_or_else(PoisonError::into_inner);
+        (focus.unwrap_or(session.focus), session.open_gen)
+    };
+    picker_payload(focus, gen)
 }
 
 /// 把面板窗口摆到锚点（指针）上：窗口左上角贴锚点，整只钳进锚点所在屏幕

@@ -2,16 +2,22 @@
  * 快速插入面板（`picker` 窗口）：鼠标侧键 X1/X2 唤出，点选/键盘速选注入到
  * 当前光标。
  *
- * 形态（产品定稿，见《功能方案设计.md》批次一；0.11 条目按钮）：
- * - 上下两区：常用词（置顶常用项，按本地使用计数排序）/ 最近剪贴板（最新在前）；
- * - 条目尾部动作按钮：剪贴板条目「固定」（**移动**进常用词）+「删除」，
- *   常用词条目「删除」（= 取消固定，不回填剪贴板）；
- * - 方向键 + Enter 键盘速选，Delete 删除选中项，Esc 收起（点外 / 再按侧键
- *   收起走 `mouse.rs` 钩子）；
- * - 落点：X1 默认「常用词」区、X2 默认「剪贴板」区（`focus` 来自 Rust），
- *   决定初始选中项；`both` 从头开始；
+ * 形态（产品定稿，见《功能方案设计.md》批次一；0.11 条目按钮；页签化改版）：
+ * - 顶部页签切换「剪贴板 / 常用词」（默认剪贴板页签，常用词页签在右）——
+ *   单页签独占列表区，常用词再多也不会把剪贴板顶出可视区；常用词按本地
+ *   使用计数排序、剪贴板最新在前；
+ * - 条目尾部动作按钮（hover / 选中时显现）：剪贴板条目「固定」（**移动**
+ *   进常用词）+「删除」，常用词条目「删除」（= 取消固定，不回填剪贴板）；
+ * - ←/→ 切换页签，↑/↓ + Enter 键盘速选，Delete 删除选中项，Esc 收起
+ *   （点外 / 再按侧键收起走 `mouse.rs` 钩子）；
+ * - 落点：X1 默认「常用词」页签、X2 默认「剪贴板」页签（`focus` 来自 Rust），
+ *   决定初始页签（目标页签为空且另一页签有货时退过去）；`both` = 默认
+ *   剪贴板页签；
  * - 点选条目 → `picker_insert`（Rust 先还焦点给先前应用再走 `inject_text`），
  *   插入后面板收起。
+ *
+ * 动效（`index.css` `picker-*`）：卡片每次打开（`gen` 变化）淡入放大重播，
+ * 页签内容按切换方向滑入，条目错峰入场；均受 `prefers-reduced-motion` 门禁。
  *
  * 数据流：Rust `picker-update` 事件推送 + 挂载时 `getPickerData` 拉取兜底
  * （面板首开时事件可能先于监听器到达）。使用计数存 localStorage
@@ -28,7 +34,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
-import { Pin, PinOff, Trash2 } from 'lucide-react'
+import { Clipboard, Pin, PinOff, Trash2, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MAX_SNIPPET_LENGTH } from '@/shared/llm-config'
 import type { PickerClipboardEntry, PickerUpdatePayload } from '@/lib/tauri-api'
@@ -36,6 +42,7 @@ import type { PickerClipboardEntry, PickerUpdatePayload } from '@/lib/tauri-api'
 const USAGE_STORAGE_KEY = 'voicekey.picker.usage'
 
 type PickerFocus = 'snippets' | 'clipboard' | 'both'
+type PickerTab = 'clipboard' | 'snippets'
 
 interface FlatItem {
   /** 稳定 key：类型前缀 + 文本（常用词与剪贴板同文本不冲突）。 */
@@ -87,25 +94,46 @@ function toFocus(raw: unknown): PickerFocus {
   return raw === 'snippets' || raw === 'clipboard' || raw === 'both' ? raw : 'both'
 }
 
+/** 落点 → 初始页签：目标页签为空且另一页签有货时退过去，免得开出来是空页。 */
+function tabForFocus(focus: PickerFocus, snippetsLen: number, clipboardLen: number): PickerTab {
+  const want: PickerTab = focus === 'snippets' ? 'snippets' : 'clipboard'
+  if (want === 'snippets' && snippetsLen === 0 && clipboardLen > 0) return 'clipboard'
+  if (want === 'clipboard' && clipboardLen === 0 && snippetsLen > 0) return 'snippets'
+  return want
+}
+
 export function Picker() {
   const { t } = useTranslation()
   const [snippets, setSnippets] = useState<string[]>([])
   const [clipboard, setClipboard] = useState<PickerClipboardEntry[]>([])
-  const [focus, setFocus] = useState<PickerFocus>('both')
-  // 用户手动选择（键盘/鼠标）；null = 用落点推导的初始选中项。每次面板打开
+  const [activeTab, setActiveTab] = useState<PickerTab>('clipboard')
+  /** 页签切换方向（`fwd` = 剪贴板 → 常用词），内容滑入方向跟着它。 */
+  const [tabDir, setTabDir] = useState<'fwd' | 'back'>('fwd')
+  // 用户手动选择（键盘/鼠标）；null = 用页签首条。每次面板打开
   // （picker-update 到达）重置回 null，跟随新落点。
   const [touchedIndex, setTouchedIndex] = useState<number | null>(null)
+  // 打开代际（Rust `open_gen`）：变化 = 面板重新弹出，卡片重挂播入场动画；
+  // 同代内的更新（删除 / 固定触发的 picker-update）不重播。
+  const [openGen, setOpenGen] = useState(0)
   // 相对时间标签的基准时刻：只在数据到达时取一次（事件回调里取当前时间，
   // 渲染期保持纯函数——react 纯度规则禁止渲染中调 Date.now）。
   const [now, setNow] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
 
   const applyPayload = useCallback((payload: PickerUpdatePayload) => {
-    setSnippets(Array.isArray(payload.snippets) ? payload.snippets : [])
-    setClipboard(Array.isArray(payload.clipboard) ? payload.clipboard : [])
+    const nextSnippets = Array.isArray(payload.snippets) ? payload.snippets : []
+    const nextClipboard = Array.isArray(payload.clipboard) ? payload.clipboard : []
+    setSnippets(nextSnippets)
+    setClipboard(nextClipboard)
     setNow(Date.now())
     setTouchedIndex(null)
-    if (payload.focus) setFocus(toFocus(payload.focus))
+    if (payload.focus) {
+      const focus = toFocus(payload.focus)
+      setActiveTab(tabForFocus(focus, nextSnippets.length, nextClipboard.length))
+      setTabDir(focus === 'snippets' ? 'fwd' : 'back')
+    }
+    const gen = payload.gen
+    if (typeof gen === 'number') setOpenGen((prev) => (prev === gen ? prev : gen))
   }, [])
 
   useEffect(() => {
@@ -136,30 +164,41 @@ export function Picker() {
     return [...snippets].sort((a, b) => (usage[b] ?? 0) - (usage[a] ?? 0))
   }, [snippets])
 
-  const flatItems = useMemo<FlatItem[]>(() => {
-    const items: FlatItem[] = sortedSnippets.map((text) => ({
-      key: `snippet:${text}`,
-      kind: 'snippet' as const,
-      text,
-    }))
-    clipboard.forEach((entry, index) => {
-      items.push({
+  const snippetItems = useMemo<FlatItem[]>(
+    () =>
+      sortedSnippets.map((text) => ({
+        key: `snippet:${text}`,
+        kind: 'snippet' as const,
+        text,
+      })),
+    [sortedSnippets],
+  )
+
+  const clipboardItems = useMemo<FlatItem[]>(
+    () =>
+      clipboard.map((entry, index) => ({
         // 序号兜底唯一性：时间戳 + 前缀可能撞车（同毫秒、同前 24 字符）。
         key: `clipboard:${index}:${entry.timestamp}`,
         kind: 'clipboard' as const,
         text: entry.text,
         timeLabel: timeLabel(t, entry.timestamp, now),
-      })
-    })
-    return items
-  }, [sortedSnippets, clipboard, now, t])
+      })),
+    [clipboard, now, t],
+  )
 
-  // 落点决定初始选中项：X1 → 常用词第一条 / X2 → 剪贴板第一条 / both → 头一条。
-  // 剪贴板落点但剪贴板为空时退回头一条（不能落到「最后一条常用词」）。
+  const items = activeTab === 'clipboard' ? clipboardItems : snippetItems
   // 用户手动移动（touchedIndex）后以手动值为准；列表收缩时夹取防越界。
-  const initialIndex = focus === 'clipboard' && clipboard.length > 0 ? sortedSnippets.length : 0
-  const selectedIndex =
-    flatItems.length === 0 ? 0 : Math.min(touchedIndex ?? initialIndex, flatItems.length - 1)
+  const selectedIndex = items.length === 0 ? 0 : Math.min(touchedIndex ?? 0, items.length - 1)
+
+  const switchTab = useCallback(
+    (tab: PickerTab) => {
+      if (tab === activeTab) return
+      setTabDir(tab === 'snippets' ? 'fwd' : 'back')
+      setActiveTab(tab)
+      setTouchedIndex(null)
+    },
+    [activeTab],
+  )
 
   const insert = useCallback(
     (item: FlatItem | undefined) => {
@@ -242,7 +281,8 @@ export function Picker() {
     [t],
   )
 
-  // 键盘速选：↑/↓ 移动，Enter 注入，Delete 删除选中项，Esc 收起，Home/End 跳首尾。
+  // 键盘速选：←/→ 切换页签，↑/↓ 移动，Enter 注入，Delete 删除选中项，
+  // Esc 收起，Home/End 跳首尾。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -250,10 +290,15 @@ export function Picker() {
         close()
         return
       }
-      if (flatItems.length === 0) return
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault()
+        switchTab(activeTab === 'clipboard' ? 'snippets' : 'clipboard')
+        return
+      }
+      if (items.length === 0) return
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        setTouchedIndex(Math.min(selectedIndex + 1, flatItems.length - 1))
+        setTouchedIndex(Math.min(selectedIndex + 1, items.length - 1))
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
         setTouchedIndex(Math.max(selectedIndex - 1, 0))
@@ -262,26 +307,26 @@ export function Picker() {
         setTouchedIndex(0)
       } else if (event.key === 'End') {
         event.preventDefault()
-        setTouchedIndex(flatItems.length - 1)
+        setTouchedIndex(items.length - 1)
       } else if (event.key === 'Enter') {
         event.preventDefault()
-        insert(flatItems[Math.min(selectedIndex, flatItems.length - 1)])
+        insert(items[Math.min(selectedIndex, items.length - 1)])
       } else if (event.key === 'Delete') {
         event.preventDefault()
-        remove(flatItems[Math.min(selectedIndex, flatItems.length - 1)])
+        remove(items[Math.min(selectedIndex, items.length - 1)])
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [flatItems, selectedIndex, insert, remove, close])
+  }, [items, selectedIndex, insert, remove, close, switchTab, activeTab])
 
-  // 选中项滚进可视区（两区共用一个滚动容器）。
+  // 选中项滚进可视区（单页签一个滚动容器）。
   useEffect(() => {
     const container = listRef.current
     if (!container) return
     const selected = container.querySelector<HTMLElement>('[data-selected="true"]')
     selected?.scrollIntoView({ block: 'nearest' })
-  }, [selectedIndex, flatItems.length])
+  }, [selectedIndex, items.length, activeTab])
 
   return (
     <div
@@ -306,35 +351,71 @@ export function Picker() {
       >
         <span className="h-8 w-px rounded-full bg-border/70" />
       </div>
+      {/* key = 打开代际：每次重新弹出重挂卡片，重播入场动画。 */}
       <div
-        className="absolute inset-2 flex flex-col overflow-hidden rounded-xl bg-popover/95 text-popover-foreground shadow-xl ring-1 ring-border"
+        key={openGen}
+        className="picker-card-in absolute inset-2 flex flex-col overflow-hidden rounded-xl bg-popover/95 text-popover-foreground shadow-xl ring-1 ring-border backdrop-blur-md"
         onClick={(event) => event.stopPropagation()}
       >
-        {/* 两区共用滚动容器：常用词（置顶常用项）在上，最近剪贴板在下。 */}
-        <div ref={listRef} className="flex-1 overflow-y-auto py-1.5">
-          <Section
-            title={t('picker.snippets')}
-            count={sortedSnippets.length}
-            emptyText={t('picker.emptySnippets')}
-            items={flatItems.slice(0, sortedSnippets.length)}
-            selectedIndex={selectedIndex}
-            onSelect={setTouchedIndex}
-            onInsert={insert}
-            onDelete={remove}
-          />
-          <Section
-            title={t('picker.clipboard')}
-            count={clipboard.length}
-            emptyText={t('picker.emptyClipboard')}
-            items={flatItems.slice(sortedSnippets.length)}
-            selectedIndex={selectedIndex}
-            offset={sortedSnippets.length}
-            onSelect={setTouchedIndex}
-            onInsert={insert}
-            onDelete={remove}
-            onPin={pin}
-            showTime
-          />
+        {/* 页签栏：段控样式，滑块跟随切换；条目数进角标（不再占列表区标题行）。 */}
+        <div className="flex items-center gap-2 px-2.5 pb-1.5 pt-2.5">
+          <div className="relative flex flex-1 rounded-lg bg-muted/60 p-1">
+            <span
+              aria-hidden
+              className={cn(
+                'picker-tab-pill absolute bottom-1 left-1 top-1 w-[calc(50%-0.25rem)]',
+                'rounded-md bg-background shadow-sm ring-1 ring-border/50',
+              )}
+              style={{
+                transform: activeTab === 'snippets' ? 'translateX(100%)' : 'translateX(0)',
+              }}
+            />
+            <TabButton
+              label={t('picker.tabClipboard')}
+              count={clipboard.length}
+              active={activeTab === 'clipboard'}
+              onClick={() => switchTab('clipboard')}
+            />
+            <TabButton
+              label={t('picker.tabSnippets')}
+              count={snippets.length}
+              active={activeTab === 'snippets'}
+              onClick={() => switchTab('snippets')}
+            />
+          </div>
+        </div>
+        {/* 内容区：key = 页签，切换时按方向滑入 + 条目错峰入场。 */}
+        <div
+          key={activeTab}
+          ref={listRef}
+          data-dir={tabDir}
+          className="picker-tab-in flex-1 overflow-y-auto px-2 py-1.5"
+        >
+          {items.length === 0 ? (
+            <EmptyState
+              icon={activeTab === 'clipboard' ? Clipboard : Pin}
+              text={
+                activeTab === 'clipboard' ? t('picker.emptyClipboard') : t('picker.emptySnippets')
+              }
+            />
+          ) : (
+            <div className="space-y-0.5">
+              {items.map((item, index) => (
+                <ItemRow
+                  key={item.key}
+                  item={item}
+                  index={index}
+                  delayMs={Math.min(index * 28, 280)}
+                  selected={index === selectedIndex}
+                  showTime={activeTab === 'clipboard'}
+                  onPin={activeTab === 'clipboard' ? pin : undefined}
+                  onSelect={setTouchedIndex}
+                  onInsert={insert}
+                  onDelete={remove}
+                />
+              ))}
+            </div>
+          )}
         </div>
         <div className="border-t border-border/60 px-3 py-1.5 text-[10px] leading-relaxed text-muted-foreground">
           {t('picker.hint')}
@@ -344,113 +425,139 @@ export function Picker() {
   )
 }
 
-function Section({
-  title,
+function TabButton({
+  label,
   count,
-  emptyText,
-  items,
-  selectedIndex,
-  offset = 0,
+  active,
+  onClick,
+}: {
+  label: string
+  count: number
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      onClick={onClick}
+      className={cn(
+        'relative z-10 flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1',
+        'text-[11px] font-medium transition-colors duration-200',
+        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      <span>{label}</span>
+      {count > 0 && (
+        <span
+          className={cn(
+            'rounded-full px-1.5 py-px text-[9px] font-normal leading-[1.4] tabular-nums',
+            active ? 'bg-primary/15 text-primary' : 'bg-muted-foreground/15 text-muted-foreground',
+          )}
+        >
+          {count}
+        </span>
+      )}
+    </button>
+  )
+}
+
+function EmptyState({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2.5 px-4 pb-6 pt-10 text-center">
+      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-muted/70 text-muted-foreground/60">
+        <Icon className="h-5 w-5" strokeWidth={1.5} />
+      </div>
+      <p className="max-w-[15rem] text-[11px] leading-relaxed text-muted-foreground">{text}</p>
+    </div>
+  )
+}
+
+function ItemRow({
+  item,
+  index,
+  delayMs,
+  selected,
+  showTime,
+  onPin,
   onSelect,
   onInsert,
   onDelete,
-  onPin,
-  showTime = false,
 }: {
-  title: string
-  count: number
-  emptyText: string
-  items: FlatItem[]
-  selectedIndex: number
-  offset?: number
+  item: FlatItem
+  index: number
+  delayMs: number
+  selected: boolean
+  showTime: boolean
+  onPin?: (item: FlatItem) => void
   onSelect: (index: number) => void
   onInsert: (item: FlatItem) => void
   onDelete: (item: FlatItem) => void
-  onPin?: (item: FlatItem) => void
-  showTime?: boolean
 }) {
   const { t } = useTranslation()
   return (
-    <div className="px-2 pb-1">
-      <div className="flex items-baseline justify-between px-1.5 pb-1 pt-1">
-        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          {title}
-        </span>
-        {count > 0 && <span className="text-[10px] text-muted-foreground/70">{count}</span>}
-      </div>
-      {count === 0 ? (
-        <div className="px-1.5 pb-1.5 text-[11px] leading-relaxed text-muted-foreground">
-          {emptyText}
-        </div>
-      ) : (
-        <div className="space-y-0.5">
-          {items.map((item, index) => {
-            const absolute = offset + index
-            const selected = absolute === selectedIndex
-            return (
-              <div
-                key={item.key}
-                data-selected={selected}
-                className={cn(
-                  'flex w-full items-center gap-1 rounded-md pr-1 text-xs transition-colors',
-                  selected
-                    ? 'bg-primary/20 text-foreground ring-1 ring-primary/40'
-                    : 'text-foreground/80 hover:bg-accent hover:text-foreground',
-                )}
-                onMouseEnter={() => onSelect(absolute)}
-              >
-                {/* 主体点击 = 插入；尾部动作按钮独立，不冒泡到插入。 */}
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className="flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left"
-                  onClick={() => onInsert(item)}
-                >
-                  <span className="w-full min-w-0 truncate whitespace-pre-wrap break-words">
-                    {item.text}
-                  </span>
-                  {/* 时间标签在条目底部自成一行——挂右侧太挤正文宽度（0.15.x）。 */}
-                  {showTime && item.timeLabel && (
-                    <span className="text-[9px] leading-none text-muted-foreground">
-                      {item.timeLabel}
-                    </span>
-                  )}
-                </button>
-                {/* 动作按钮纵向排列（0.12 用户拍板）：两枚小图标上下叠，少挤正文宽度。
-                    剪贴板条目 = 固定（上）+ 删除（下）；常用词条目 = 取消固定。 */}
-                <div className="flex shrink-0 flex-col gap-0.5">
-                  {onPin && (
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      aria-label={t('picker.pin')}
-                      title={t('picker.pin')}
-                      className="rounded-md p-0.5 text-muted-foreground/70 transition-colors hover:bg-primary/15 hover:text-primary"
-                      onClick={() => onPin(item)}
-                    >
-                      <Pin className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    aria-label={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
-                    title={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
-                    className="rounded-md p-0.5 text-muted-foreground/70 transition-colors hover:bg-destructive/15 hover:text-destructive"
-                    onClick={() => onDelete(item)}
-                  >
-                    {item.kind === 'clipboard' ? (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    ) : (
-                      <PinOff className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+    <div
+      data-selected={selected}
+      style={{ animationDelay: `${delayMs}ms` }}
+      className={cn(
+        'picker-item-in group flex w-full items-center gap-1 rounded-lg pr-1 text-xs',
+        'transition-colors duration-150',
+        selected
+          ? 'bg-primary/15 text-foreground ring-1 ring-primary/35'
+          : 'text-foreground/80 hover:bg-accent/60 hover:text-foreground',
       )}
+      onMouseEnter={() => onSelect(index)}
+    >
+      {/* 主体点击 = 插入；尾部动作按钮独立，不冒泡到插入。 */}
+      <button
+        type="button"
+        tabIndex={-1}
+        className="flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left"
+        onClick={() => onInsert(item)}
+      >
+        <span className="w-full min-w-0 truncate whitespace-pre-wrap break-words">{item.text}</span>
+        {/* 时间标签在条目底部自成一行——挂右侧太挤正文宽度（0.15.x）。 */}
+        {showTime && item.timeLabel && (
+          <span className="text-[9px] leading-none text-muted-foreground">{item.timeLabel}</span>
+        )}
+      </button>
+      {/* 动作按钮纵向排列（0.12 用户拍板）：两枚小图标上下叠，少挤正文宽度。
+          hover / 选中时淡入——常显太抢正文。剪贴板条目 = 固定（上）+ 删除（下）；
+          常用词条目 = 取消固定。 */}
+      <div
+        className={cn(
+          'flex shrink-0 flex-col gap-0.5 opacity-0 transition-opacity duration-150',
+          'group-hover:opacity-100',
+          selected && 'opacity-100',
+        )}
+      >
+        {onPin && (
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label={t('picker.pin')}
+            title={t('picker.pin')}
+            className="rounded-md p-0.5 text-muted-foreground/70 transition-colors hover:bg-primary/15 hover:text-primary"
+            onClick={() => onPin(item)}
+          >
+            <Pin className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
+          title={item.kind === 'clipboard' ? t('picker.delete') : t('picker.unpin')}
+          className="rounded-md p-0.5 text-muted-foreground/70 transition-colors hover:bg-destructive/15 hover:text-destructive"
+          onClick={() => onDelete(item)}
+        >
+          {item.kind === 'clipboard' ? (
+            <Trash2 className="h-3.5 w-3.5" />
+          ) : (
+            <PinOff className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </div>
     </div>
   )
 }

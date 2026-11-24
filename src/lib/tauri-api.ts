@@ -101,6 +101,8 @@ export interface InjectFallbackPayload {
 export interface PickerUpdatePayload {
   /** 打开面板的侧键落点：X1/X2 默认区域。 */
   focus?: 'snippets' | 'clipboard' | 'both'
+  /** 打开代际（Rust `open_gen`，0 = 关闭）：变化 = 面板重新弹出，渲染层据此重播入场动画。 */
+  gen?: number
   /** 常用词（`picker.userSnippets`，面板按最近使用排序）。 */
   snippets?: string[]
   /** 最近剪贴板（最新在前）。 */

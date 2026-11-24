@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.17.1](https://github.com/DaweiTian/zhiruo/compare/v0.17.0...v0.17.1) (2026-11-24)
+
+0.17.0 的打开闪帧修复版。
+
+### Bug Fixes
+
+- **picker:** 打开面板不再闪帧——0.17.0 的入场动画在窗口已可见后从透明度 0 起播
+  （`show` 先于 `picker-update` 到达，`key={openGen}` 重挂把卡片 / 页签 / 条目三套
+  淡入动效全部重播），整面板消失一帧再淡入。改为卡片不随打开重挂，打开反馈走
+  **仅 transform** 的 WAAPI 弹入（透明度恒 1）；页签滑入 / 条目错峰加 `data-anim`
+  门禁，仅手动切页签播放，打开定落点走瞬切
+
 ## [0.17.0](https://github.com/DaweiTian/zhiruo/compare/v0.16.0...v0.17.0) (2026-11-24)
 
 快插面板页签化改版：剪贴板 / 常用词分页签呈现，配一轮 UI 与动效打磨。

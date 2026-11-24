@@ -1,1222 +1,1788 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>芷若 Zhiruo — 按住说话，松开即成文字</title>
-<meta name="description" content="芷若（Zhiruo）是一款隐私优先的按住说话（Push-to-Talk）语音输入工具，支持 Windows、macOS 与 Linux。按住快捷键说话，松开即输入；自带云端识别与可选 AI 润色翻译，历史只留在本机。" />
-<meta property="og:title" content="芷若 Zhiruo — 按住说话，松开即成文字" />
-<meta property="og:description" content="隐私优先的按住说话语音输入工具，Windows / macOS / Linux 开源免费。" />
-<meta property="og:type" content="website" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234E6B26'/%3E%3Cstop offset='1' stop-color='%2393B447'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1024' height='1024' rx='232' fill='url(%23g)'/%3E%3Cpath d='M296 728 C316 560 448 424 616 408 C596 576 464 712 296 728 Z' fill='%23F6FAEE'/%3E%3C/svg%3E" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@600;700&display=swap" rel="stylesheet" />
-<script>document.documentElement.classList.add('js')</script>
-<style>
-  :root {
-    --paper: #f6f4ec;
-    --paper-soft: #efebdf;
-    --ink: #22281c;
-    --ink-soft: #4c5344;
-    --muted: #79806c;
-    --line: rgba(34, 40, 28, 0.12);
-    --line-strong: rgba(34, 40, 28, 0.22);
-    --olive-deep: #2c3b1c;
-    --olive: #4e6b26;
-    --olive-mid: #6f9331;
-    --olive-light: #93b447;
-    --cream: #f6faee;
-    --glow: rgba(111, 147, 49, 0.28);
-    --radius: 14px;
-    --font-display: "Noto Serif SC", "Songti SC", "SimSun", serif;
-    --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-    --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
-  }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  html { scroll-behavior: smooth; }
-
-  body {
-    font-family: var(--font-sans);
-    color: var(--ink);
-    background: var(--paper);
-    line-height: 1.75;
-    -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
-  }
-
-  /* 纸张细纹理 */
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    opacity: 0.5;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.13 0 0 0 0 0.16 0 0 0 0 0.10 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
-  }
-
-  a { color: inherit; text-decoration: none; }
-  img, svg { display: block; }
-
-  .wrap {
-    width: min(1120px, calc(100% - 48px));
-    margin-inline: auto;
-    position: relative;
-    z-index: 1;
-  }
-
-  /* ============ 顶部导航 ============ */
-  .nav {
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    background: rgba(246, 244, 236, 0.78);
-    border-bottom: 1px solid var(--line);
-  }
-  .nav-inner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 64px;
-  }
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: 1.15rem;
-    letter-spacing: 0.04em;
-  }
-  .brand svg { width: 34px; height: 34px; border-radius: 9px; box-shadow: 0 4px 14px var(--glow); }
-  .brand small {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 400;
-    letter-spacing: 0.14em;
-    color: var(--muted);
-    border: 1px solid var(--line);
-    border-radius: 99px;
-    padding: 2px 9px;
-    margin-left: 2px;
-  }
-  .nav-links {
-    display: flex;
-    align-items: center;
-    gap: 26px;
-    font-size: 0.88rem;
-    color: var(--ink-soft);
-  }
-  .nav-links > a:not(.nav-cta) {
-    position: relative;
-    padding: 4px 0;
-    transition: color 0.25s;
-  }
-  .nav-links > a:not(.nav-cta)::after {
-    content: "";
-    position: absolute;
-    left: 0; bottom: 0;
-    width: 100%; height: 1px;
-    background: var(--olive-mid);
-    transform: scaleX(0);
-    transform-origin: left;
-    transition: transform 0.3s ease;
-  }
-  .nav-links > a:not(.nav-cta):hover { color: var(--olive); }
-  .nav-links > a:not(.nav-cta):hover::after { transform: scaleX(1); }
-  .nav-cta {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 9px 18px;
-    border-radius: 99px;
-    background: var(--olive-deep);
-    color: var(--cream) !important;
-    font-size: 0.84rem;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    transition: transform 0.25s, background 0.25s, box-shadow 0.25s;
-  }
-  .nav-cta:hover {
-    background: var(--olive);
-    color: var(--cream) !important;
-    transform: translateY(-1px);
-    box-shadow: 0 10px 24px var(--glow);
-  }
-
-  /* ============ Hero ============ */
-  .hero {
-    position: relative;
-    padding: 88px 0 72px;
-  }
-  .hero-grid {
-    display: grid;
-    grid-template-columns: 1.15fr 0.85fr;
-    gap: 56px;
-    align-items: center;
-  }
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--olive);
-    border: 1px solid rgba(111, 147, 49, 0.35);
-    background: rgba(111, 147, 49, 0.08);
-    border-radius: 99px;
-    padding: 7px 16px;
-    margin-bottom: 28px;
-  }
-  .eyebrow .dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--olive-mid);
-    box-shadow: 0 0 0 0 rgba(111, 147, 49, 0.5);
-    animation: pulse 2.2s infinite;
-  }
-  @keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(111, 147, 49, 0.45); }
-    70% { box-shadow: 0 0 0 9px rgba(111, 147, 49, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(111, 147, 49, 0); }
-  }
-  .hero h1 {
-    font-family: var(--font-display);
-    font-size: clamp(2.9rem, 6.2vw, 4.6rem);
-    font-weight: 700;
-    line-height: 1.12;
-    letter-spacing: 0.02em;
-    margin-bottom: 20px;
-  }
-  .hero h1 .en {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: clamp(0.82rem, 1.3vw, 1rem);
-    font-weight: 400;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-top: 14px;
-    white-space: nowrap;
-  }
-  .hero h1 .grad {
-    background: linear-gradient(115deg, var(--olive) 0%, var(--olive-light) 60%, var(--olive-mid) 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-  .slogan {
-    font-family: var(--font-display);
-    font-size: clamp(1.12rem, 2vw, 1.35rem);
-    color: var(--olive-deep);
-    margin-bottom: 18px;
-    letter-spacing: 0.12em;
-  }
-  .slogan span {
-    display: block;
-    font-family: var(--font-sans);
-    font-size: 0.86rem;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-    margin-top: 6px;
-  }
-  .lede {
-    font-size: 1.02rem;
-    color: var(--ink-soft);
-    max-width: 34em;
-    margin-bottom: 36px;
-  }
-  .hero-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 40px; }
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    padding: 15px 28px;
-    border-radius: 12px;
-    font-size: 0.95rem;
-    font-weight: 500;
-    transition: transform 0.25s, box-shadow 0.25s, background 0.25s, border-color 0.25s;
-    border: 1px solid transparent;
-    cursor: pointer;
-  }
-  .btn svg { width: 18px; height: 18px; }
-  .btn-primary {
-    background: linear-gradient(135deg, var(--olive-deep), var(--olive));
-    color: var(--cream);
-    box-shadow: 0 14px 32px var(--glow);
-  }
-  .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 18px 40px rgba(111, 147, 49, 0.4);
-  }
-  .btn-ghost {
-    border-color: var(--line-strong);
-    color: var(--ink);
-    background: rgba(255, 255, 255, 0.45);
-  }
-  .btn-ghost:hover {
-    transform: translateY(-2px);
-    border-color: var(--olive-mid);
-    background: rgba(111, 147, 49, 0.08);
-  }
-
-  .meta-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 22px;
-    font-family: var(--font-mono);
-    font-size: 0.74rem;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-  }
-  .meta-row b { color: var(--olive-deep); font-weight: 500; }
-
-  /* Hero 右侧视觉 */
-  .hero-visual { position: relative; min-height: 548px; }
-  .icon-orb {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 152px;
-    height: 152px;
-    filter: drop-shadow(0 24px 48px var(--glow));
-    animation: float 7s ease-in-out infinite;
-  }
-  @keyframes float {
-    0%, 100% { transform: translateX(-50%) translateY(0); }
-    50% { transform: translateX(-50%) translateY(-14px); }
-  }
-
-  .hud-card {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 238px;
-    background: rgba(255, 255, 255, 0.82);
-    border: 1px solid var(--line);
-    border-radius: 18px;
-    padding: 22px 24px;
-    box-shadow: 0 28px 60px rgba(34, 40, 28, 0.1);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-  }
-  .hud-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
-  }
-  .hud-title {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.12em;
-    color: var(--muted);
-    text-transform: uppercase;
-  }
-  .rec {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.1em;
-    color: var(--olive);
-    background: rgba(111, 147, 49, 0.12);
-    border: 1px solid rgba(111, 147, 49, 0.3);
-    padding: 4px 11px;
-    border-radius: 99px;
-  }
-  .rec i {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--olive-mid);
-    animation: pulse 1.6s infinite;
-  }
-  .hud-text {
-    font-family: var(--font-display);
-    font-size: 1.22rem;
-    line-height: 1.9;
-    color: var(--ink);
-    min-height: 4.6em;
-  }
-  .hud-text .cursor {
-    display: inline-block;
-    width: 2px;
-    height: 1.1em;
-    background: var(--olive-mid);
-    vertical-align: -0.15em;
-    margin-left: 2px;
-    animation: blink 1s steps(1) infinite;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
-
-  .wave {
-    display: flex;
-    align-items: flex-end;
-    gap: 4px;
-    height: 34px;
-    margin-top: 18px;
-  }
-  .wave i {
-    flex: 1;
-    border-radius: 3px;
-    background: linear-gradient(180deg, var(--olive-light), var(--olive));
-    animation: eq 1.15s ease-in-out infinite;
-    opacity: 0.85;
-    min-width: 3px;
-  }
-  @keyframes eq {
-    0%, 100% { height: 22%; }
-    50% { height: 100%; }
-  }
-
-  .chip-float {
-    position: absolute;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    border-radius: 12px;
-    background: var(--olive-deep);
-    color: var(--cream);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.04em;
-    box-shadow: 0 16px 36px rgba(44, 59, 28, 0.3);
-    white-space: nowrap;
-  }
-  .chip-float.kbd {
-    top: 172px;
-    left: -6px;
-    animation: float2 6s ease-in-out infinite;
-  }
-  .chip-float.paste {
-    bottom: 2px;
-    right: -6px;
-    background: #fff;
-    color: var(--olive-deep);
-    border: 1px solid var(--line);
-    animation: float2 7.4s ease-in-out infinite reverse;
-  }
-  @keyframes float2 {
-    0%, 100% { transform: translateY(0) rotate(-1.2deg); }
-    50% { transform: translateY(-10px) rotate(-1.2deg); }
-  }
-
-  /* ============ 通用节标题 ============ */
-  section { position: relative; z-index: 1; }
-  .section { padding: 88px 0; }
-  .section-head { max-width: 640px; margin-bottom: 52px; }
-  .section-tag {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--olive);
-    margin-bottom: 16px;
-  }
-  .section-tag::before {
-    content: "";
-    width: 28px;
-    height: 1px;
-    background: var(--olive-mid);
-  }
-  .section-head h2 {
-    font-family: var(--font-display);
-    font-size: clamp(1.85rem, 3.4vw, 2.55rem);
-    font-weight: 700;
-    line-height: 1.3;
-    letter-spacing: 0.03em;
-    margin-bottom: 16px;
-  }
-  .section-head p {
-    color: var(--ink-soft);
-    font-size: 1.02rem;
-  }
-
-  /* ============ 流程 ============ */
-  .flow {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 14px;
-    counter-reset: step;
-  }
-  .flow-card {
-    position: relative;
-    background: rgba(255, 255, 255, 0.55);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: 26px 20px 24px;
-    transition: transform 0.35s, border-color 0.35s, box-shadow 0.35s;
-    overflow: hidden;
-  }
-  .flow-card::before {
-    counter-increment: step;
-    content: "0" counter(step);
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.18em;
-    color: var(--olive-mid);
-    margin-bottom: 18px;
-  }
-  .flow-card::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(160deg, rgba(111, 147, 49, 0.1), transparent 55%);
-    opacity: 0;
-    transition: opacity 0.35s;
-    pointer-events: none;
-  }
-  .flow-card:hover {
-    transform: translateY(-5px);
-    border-color: rgba(111, 147, 49, 0.4);
-    box-shadow: 0 22px 44px rgba(34, 40, 28, 0.1);
-  }
-  .flow-card:hover::after { opacity: 1; }
-  .flow-card h3 {
-    font-family: var(--font-display);
-    font-size: 1.06rem;
-    margin-bottom: 8px;
-    letter-spacing: 0.04em;
-  }
-  .flow-card p { font-size: 0.86rem; color: var(--ink-soft); line-height: 1.7; }
-
-  /* ============ 特性 ============ */
-  .features {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 18px;
-  }
-  .feature {
-    position: relative;
-    border: 1px solid var(--line);
-    border-radius: 18px;
-    padding: 32px 28px;
-    background: rgba(255, 255, 255, 0.5);
-    transition: transform 0.35s, box-shadow 0.35s, border-color 0.35s, background 0.35s;
-    overflow: hidden;
-  }
-  .feature:hover {
-    transform: translateY(-6px);
-    border-color: rgba(111, 147, 49, 0.42);
-    background: rgba(255, 255, 255, 0.85);
-    box-shadow: 0 26px 52px rgba(34, 40, 28, 0.12);
-  }
-  .feature .ico {
-    width: 48px;
-    height: 48px;
-    border-radius: 13px;
-    display: grid;
-    place-items: center;
-    background: linear-gradient(145deg, rgba(111, 147, 49, 0.16), rgba(111, 147, 49, 0.05));
-    border: 1px solid rgba(111, 147, 49, 0.22);
-    margin-bottom: 20px;
-    color: var(--olive);
-  }
-  .feature .ico svg { width: 23px; height: 23px; }
-  .feature h3 {
-    font-family: var(--font-display);
-    font-size: 1.14rem;
-    letter-spacing: 0.04em;
-    margin-bottom: 10px;
-  }
-  .feature p { font-size: 0.9rem; color: var(--ink-soft); }
-
-  /* ============ 提供商走马灯 ============ */
-  .marquee-sec { padding: 26px 0; border-block: 1px solid var(--line); background: rgba(111, 147, 49, 0.05); overflow: hidden; }
-  .marquee {
-    display: flex;
-    gap: 0;
-    width: max-content;
-    animation: slide 36s linear infinite;
-    font-family: var(--font-mono);
-    font-size: 0.86rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--olive-deep);
-  }
-  .marquee span { display: inline-flex; align-items: center; gap: 28px; padding-right: 28px; white-space: nowrap; }
-  .marquee span::after { content: "◦"; color: var(--olive-mid); }
-  @keyframes slide { to { transform: translateX(-50%); } }
-
-  /* ============ 隐私（深色） ============ */
-  .privacy {
-    background:
-      radial-gradient(1100px 500px at 82% -10%, rgba(147, 180, 71, 0.22), transparent 60%),
-      radial-gradient(900px 480px at 8% 110%, rgba(78, 107, 38, 0.35), transparent 60%),
-      var(--olive-deep);
-    color: var(--cream);
-    border-radius: 28px;
-    padding: 76px 0;
-    margin: 40px 0;
-    overflow: hidden;
-  }
-  .privacy .section-tag { color: var(--olive-light); }
-  .privacy .section-tag::before { background: var(--olive-light); }
-  .privacy .section-head h2 { color: var(--cream); }
-  .privacy .section-head p { color: rgba(246, 250, 238, 0.72); }
-
-  .flow-priv {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    margin-top: 8px;
-  }
-  .priv-node {
-    position: relative;
-    border: 1px solid rgba(246, 250, 238, 0.18);
-    background: rgba(246, 250, 238, 0.06);
-    border-radius: 16px;
-    padding: 26px 22px;
-    transition: border-color 0.3s, background 0.3s, transform 0.3s;
-  }
-  .priv-node:hover {
-    transform: translateY(-4px);
-    border-color: rgba(147, 180, 71, 0.55);
-    background: rgba(246, 250, 238, 0.1);
-  }
-  .priv-node .num {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.2em;
-    color: var(--olive-light);
-    margin-bottom: 14px;
-  }
-  .priv-node h3 {
-    font-family: var(--font-display);
-    font-size: 1.05rem;
-    letter-spacing: 0.05em;
-    margin-bottom: 10px;
-  }
-  .priv-node p { font-size: 0.85rem; line-height: 1.75; color: rgba(246, 250, 238, 0.72); }
-  .priv-note {
-    margin-top: 34px;
-    padding: 20px 24px;
-    border-left: 3px solid var(--olive-light);
-    background: rgba(246, 250, 238, 0.07);
-    border-radius: 0 12px 12px 0;
-    font-size: 0.9rem;
-    color: rgba(246, 250, 238, 0.85);
-    line-height: 1.85;
-  }
-
-  /* ============ 技术栈 / 平台 ============ */
-  .two-col {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 22px;
-    align-items: stretch;
-  }
-  .panel {
-    border: 1px solid var(--line);
-    border-radius: 20px;
-    padding: 36px 34px;
-    background: rgba(255, 255, 255, 0.55);
-  }
-  .panel h3 {
-    font-family: var(--font-display);
-    font-size: 1.35rem;
-    letter-spacing: 0.05em;
-    margin-bottom: 14px;
-  }
-  .panel > p { color: var(--ink-soft); font-size: 0.94rem; margin-bottom: 24px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
-  .chip {
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    letter-spacing: 0.04em;
-    padding: 9px 15px;
-    border-radius: 99px;
-    border: 1px solid var(--line-strong);
-    color: var(--ink-soft);
-    background: rgba(255, 255, 255, 0.6);
-    transition: border-color 0.25s, color 0.25s, transform 0.25s;
-  }
-  .chip:hover {
-    border-color: var(--olive-mid);
-    color: var(--olive-deep);
-    transform: translateY(-2px);
-  }
-  .platform-list { display: grid; gap: 12px; }
-  .plat {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 16px 18px;
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.5);
-    transition: border-color 0.3s, transform 0.3s;
-  }
-  .plat:hover { border-color: rgba(111, 147, 49, 0.45); transform: translateX(4px); }
-  .plat .p-ico {
-    width: 42px; height: 42px;
-    flex: none;
-    border-radius: 11px;
-    display: grid;
-    place-items: center;
-    background: rgba(111, 147, 49, 0.12);
-    color: var(--olive);
-  }
-  .plat .p-ico svg { width: 21px; height: 21px; }
-  .plat b { display: block; font-size: 0.96rem; font-weight: 600; letter-spacing: 0.02em; }
-  .plat span { font-size: 0.82rem; color: var(--muted); }
-
-  /* ============ CTA ============ */
-  .cta {
-    text-align: center;
-    padding: 96px 0 88px;
-    position: relative;
-    overflow: hidden;
-  }
-  .cta::before {
-    content: "";
-    position: absolute;
-    left: 50%;
-    top: 12%;
-    width: 620px;
-    height: 620px;
-    transform: translateX(-50%);
-    background: radial-gradient(circle, rgba(111, 147, 49, 0.16), transparent 68%);
-    pointer-events: none;
-  }
-  .cta h2 {
-    font-family: var(--font-display);
-    font-size: clamp(1.95rem, 4vw, 2.9rem);
-    letter-spacing: 0.06em;
-    line-height: 1.35;
-    margin-bottom: 16px;
-  }
-  .cta .sub {
-    color: var(--ink-soft);
-    max-width: 33em;
-    margin: 0 auto 36px;
-    font-size: 1.02rem;
-  }
-  .cta-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 14px; }
-
-  /* ============ 页脚 ============ */
-  footer {
-    border-top: 1px solid var(--line);
-    padding: 36px 0 48px;
-  }
-  .foot-inner {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
-    color: var(--muted);
-    font-size: 0.84rem;
-  }
-  .foot-links { display: flex; gap: 22px; }
-  .foot-links a { transition: color 0.25s; }
-  .foot-links a:hover { color: var(--olive); }
-  .foot-brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-family: var(--font-display);
-    color: var(--ink);
-    letter-spacing: 0.08em;
-  }
-  .foot-brand svg { width: 26px; height: 26px; border-radius: 7px; }
-  .foot-filing {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: 8px 22px;
-    margin-top: 22px;
-    padding-top: 20px;
-    border-top: 1px solid var(--line);
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-  .foot-filing a {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    transition: color 0.25s;
-  }
-  .foot-filing a:hover { color: var(--olive); }
-  .foot-filing svg { width: 15px; height: 15px; opacity: 0.75; }
-
-  /* ============ 滚动浮现（无 JS 时保持可见） ============ */
-  html.js .reveal {
-    opacity: 0;
-    transform: translateY(26px);
-    transition: opacity 0.85s cubic-bezier(0.22, 1, 0.36, 1), transform 0.85s cubic-bezier(0.22, 1, 0.36, 1);
-  }
-  html.js .reveal.in { opacity: 1; transform: none; }
-  html.js .reveal[data-delay="1"] { transition-delay: 0.08s; }
-  html.js .reveal[data-delay="2"] { transition-delay: 0.16s; }
-  html.js .reveal[data-delay="3"] { transition-delay: 0.24s; }
-  html.js .reveal[data-delay="4"] { transition-delay: 0.32s; }
-  html.js .reveal[data-delay="5"] { transition-delay: 0.4s; }
-
-  /* ============ 响应式 ============ */
-  @media (max-width: 980px) {
-    .hero-grid { grid-template-columns: 1fr; gap: 48px; }
-    .hero-visual { min-height: 440px; max-width: 480px; margin-inline: auto; width: 100%; }
-    .flow { grid-template-columns: repeat(2, 1fr); }
-    .features { grid-template-columns: repeat(2, 1fr); }
-    .flow-priv { grid-template-columns: repeat(2, 1fr); }
-    .two-col { grid-template-columns: 1fr; }
-    .nav-links a:not(.nav-cta) { display: none; }
-  }
-  @media (max-width: 620px) {
-    .wrap { width: calc(100% - 32px); }
-    .hero { padding: 56px 0 48px; }
-    .hero h1 .en { white-space: normal; letter-spacing: 0.18em; }
-    .section { padding: 64px 0; }
-    .flow, .features, .flow-priv { grid-template-columns: 1fr; }
-    .chip-float.kbd { left: 0; }
-    .chip-float.paste { right: 0; }
-    .hero-actions .btn { width: 100%; justify-content: center; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-    }
-    .reveal { opacity: 1; transform: none; }
-  }
-</style>
-</head>
-<body>
-
-<!-- 图标精灵 -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <defs>
-    <linearGradient id="zg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4E6B26" />
-      <stop offset="0.55" stop-color="#6F9331" />
-      <stop offset="1" stop-color="#93B447" />
-    </linearGradient>
-    <radialGradient id="zs" cx="0.28" cy="0.2" r="0.9">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.2" />
-      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0.04" />
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0" />
-    </radialGradient>
-    <symbol id="zhiruo-icon" viewBox="0 0 1024 1024">
-      <rect width="1024" height="1024" rx="232" fill="url(#zg)" />
-      <rect width="1024" height="1024" rx="232" fill="url(#zs)" />
-      <g transform="translate(-44 44)">
-        <path d="M296 728 C316 560 448 424 616 408 C596 576 464 712 296 728 Z" fill="#F6FAEE" />
-        <path d="M606 298 A110 110 0 0 1 726 418" fill="none" stroke="#F6FAEE" stroke-width="56" stroke-linecap="round" />
-        <path d="M599 219 A190 190 0 0 1 805 425" fill="none" stroke="#F6FAEE" stroke-width="44" stroke-linecap="round" />
-      </g>
-    </symbol>
-  </defs>
-</svg>
-
-<!-- 导航 -->
-<header class="nav">
-  <div class="wrap nav-inner">
-    <a class="brand" href="#top" aria-label="芷若首页">
-      <svg viewBox="0 0 1024 1024"><use href="#zhiruo-icon" /></svg>
-      芷若
-      <small>ZHIRUO</small>
-    </a>
-    <nav class="nav-links" aria-label="页面导航">
-      <a href="#how">如何工作</a>
-      <a href="#features">核心特性</a>
-      <a href="#privacy">隐私</a>
-      <a href="#tech">技术栈</a>
-      <a class="nav-cta" href="https://github.com/DaweiTian/zhiruo/releases/latest" target="_blank" rel="noopener">
-        下载
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 11 5 5 5-5" /><path d="M5 21h14" /></svg>
-      </a>
-    </nav>
-  </div>
-</header>
-
-<!-- Hero -->
-<main id="top">
-<section class="hero">
-  <div class="wrap hero-grid">
-    <div>
-      <div class="eyebrow reveal in">
-        <span class="dot"></span>
-        开源 · 免费 · v0.16.0
-      </div>
-      <h1 class="reveal in" data-delay="1">
-        按住说话，<br /><span class="grad">松开即成文字</span>
-        <span class="en">Zhiruo · Push&#8209;to&#8209;Talk Voice Input</span>
-      </h1>
-      <p class="slogan reveal in" data-delay="2">
-        言若有声，芷若知心。
-        <span>Where voice finds words, and Zhiruo finds heart.</span>
-      </p>
-      <p class="lede reveal in" data-delay="3">
-        芷若是一款隐私优先的桌面语音输入工具，支持 Windows、macOS 与 Linux。
-        按住快捷键说话、松开即出字，文字直接落到光标所在的任意应用；
-        自带云端识别与可选的 AI 润色、翻译，历史记录只留在你自己的电脑上。
-      </p>
-      <div class="hero-actions reveal in" data-delay="4">
-        <a class="btn btn-primary" href="https://github.com/DaweiTian/zhiruo/releases/latest" target="_blank" rel="noopener">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 11 5 5 5-5" /><path d="M5 21h14" /></svg>
-          免费下载
-        </a>
-        <a class="btn btn-ghost" href="https://github.com/DaweiTian/zhiruo" target="_blank" rel="noopener">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.9 5.33.9 11.6c0 4.9 3.17 9.05 7.57 10.51.55.1.75-.24.75-.53v-1.86c-3.08.67-3.73-1.49-3.73-1.49-.5-1.28-1.23-1.62-1.23-1.62-1.01-.69.08-.67.08-.67 1.11.08 1.7 1.14 1.7 1.14.99 1.7 2.6 1.21 3.23.93.1-.72.39-1.21.7-1.49-2.46-.28-5.05-1.23-5.05-5.47 0-1.21.43-2.2 1.14-2.98-.11-.28-.49-1.41.11-2.93 0 0 .93-.3 3.04 1.13a10.5 10.5 0 0 1 5.53 0c2.1-1.43 3.03-1.13 3.03-1.13.6 1.52.22 2.65.11 2.93.71.78 1.14 1.77 1.14 2.98 0 4.25-2.6 5.18-5.07 5.46.4.34.75 1.02.75 2.06v3.05c0 .29.2.64.76.53 4.39-1.47 7.56-5.61 7.56-10.51C23.1 5.33 18.27.5 12 .5Z" /></svg>
-          查看源码
-        </a>
-      </div>
-      <div class="meta-row reveal in" data-delay="5">
-        <span><b>Windows</b> · <b>macOS</b> · <b>Linux</b></span>
-        <span><b>MIT</b> 开源许可</span>
-        <span><b>Tauri 2</b> + Rust + React</span>
-      </div>
-    </div>
-
-    <div class="hero-visual reveal in" data-delay="2">
-      <svg class="icon-orb" viewBox="0 0 1024 1024" aria-label="芷若应用图标"><use href="#zhiruo-icon" /></svg>
-
-      <div class="chip-float kbd">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" /></svg>
-        按住 Ctrl+Shift+Space
-      </div>
-
-      <div class="hud-card">
-        <div class="hud-head">
-          <div class="hud-title">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
-            live transcript
-          </div>
-          <div class="rec"><i></i>REC</div>
-        </div>
-        <div class="hud-text"><span id="typed"></span><span class="cursor"></span></div>
-        <div class="wave" aria-hidden="true">
-          <i style="animation-delay:0s"></i><i style="animation-delay:.07s"></i><i style="animation-delay:.14s"></i><i style="animation-delay:.21s"></i><i style="animation-delay:.28s"></i><i style="animation-delay:.35s"></i><i style="animation-delay:.42s"></i><i style="animation-delay:.49s"></i><i style="animation-delay:.56s"></i><i style="animation-delay:.63s"></i><i style="animation-delay:.7s"></i><i style="animation-delay:.77s"></i><i style="animation-delay:.84s"></i><i style="animation-delay:.91s"></i><i style="animation-delay:.98s"></i><i style="animation-delay:1.05s"></i><i style="animation-delay:1.12s"></i><i style="animation-delay:1.19s"></i><i style="animation-delay:1.26s"></i><i style="animation-delay:1.33s"></i><i style="animation-delay:1.4s"></i><i style="animation-delay:1.47s"></i><i style="animation-delay:1.54s"></i><i style="animation-delay:1.61s"></i><i style="animation-delay:1.68s"></i><i style="animation-delay:1.75s"></i><i style="animation-delay:1.82s"></i><i style="animation-delay:1.89s"></i>
-        </div>
-      </div>
-
-      <div class="chip-float paste">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="4" width="12" height="16" rx="2" /><path d="M4 8v10a2 2 0 0 0 2 2h6" /></svg>
-        松开 → 输入光标处
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 工作方式 -->
-<section class="section" id="how">
-  <div class="wrap">
-    <div class="section-head reveal">
-      <div class="section-tag">01 — Workflow</div>
-      <h2>五步之内，说完即成文</h2>
-      <p>主进程持有麦克风、热键、凭据、历史与文本注入；识别在云端完成，界面永远不被推理阻塞。</p>
-    </div>
-    <div class="flow">
-      <div class="flow-card reveal" data-delay="1">
-        <h3>按住热键</h3>
-        <p>默认 Windows / Linux 为 Ctrl+Shift+Space，macOS 为 Option。全部快捷键可在设置里改。</p>
-      </div>
-      <div class="flow-card reveal" data-delay="2">
-        <h3>开口说话</h3>
-        <p>只在按住期间录音，松手即停。麦克风可在设置中自由选择。</p>
-      </div>
-      <div class="flow-card reveal" data-delay="3">
-        <h3>云端识别</h3>
-        <p>音频送入你配置的 ASR 端点，流式返回，模型自带标点。</p>
-      </div>
-      <div class="flow-card reveal" data-delay="4">
-        <h3>润色翻译</h3>
-        <p>可选：用你自己的 LLM 清理口语、调整风格，或就地翻译选中文字。</p>
-      </div>
-      <div class="flow-card reveal" data-delay="5">
-        <h3>输入并留存</h3>
-        <p>结果直接注入光标所在应用，并保存到本机历史（90 天）。</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 提供商走马灯 -->
-<div class="marquee-sec" aria-hidden="true">
-  <div class="marquee" id="marquee">
-    <span>MiMo</span><span>Qwen · DashScope</span><span>Doubao Ark</span><span>OpenAI</span><span>DeepSeek</span><span>OpenRouter</span><span>Custom Endpoint</span><span>Streaming ASR</span>
-    <span>MiMo</span><span>Qwen · DashScope</span><span>Doubao Ark</span><span>OpenAI</span><span>DeepSeek</span><span>OpenRouter</span><span>Custom Endpoint</span><span>Streaming ASR</span>
-  </div>
-</div>
-
-<!-- 核心特性 -->
-<section class="section" id="features">
-  <div class="wrap">
-    <div class="section-head reveal">
-      <div class="section-tag">02 — Features</div>
-      <h2>把语音输入做成一种习惯</h2>
-      <p>不打断心流的桌面原生体验：快捷键唤起、流式出字、就地润色，凭据与历史都留在本地。</p>
-    </div>
-    <div class="features">
-      <div class="feature reveal" data-delay="1">
-        <div class="ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
-        </div>
-        <h3>按住说，松开写</h3>
-        <p>全局 Push-to-Talk 热键，边说边出字的流式 HUD，标点由模型原生生成。说完的瞬间，文字已经落在光标处。</p>
-      </div>
-      <div class="feature reveal" data-delay="2">
-        <div class="ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16" /><path d="M4 12h10" /><path d="M4 17h7" /><circle cx="18" cy="16" r="3" /><path d="m21 19-1.8-1.8" /></svg>
-        </div>
-        <h3>自带识别服务</h3>
-        <p>内置 MiMo、通义千问、豆包 Ark、OpenAI 等预设，也可填任意 OpenAI 兼容的 Base URL、模型与 API Key。</p>
-      </div>
-      <div class="feature reveal" data-delay="3">
-        <div class="ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" /><path d="M19 15l.9 2.6L22.5 18.5l-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9L19 15Z" /></svg>
-        </div>
-        <h3>可选 AI 润色与翻译</h3>
-        <p>接入 OpenAI、DeepSeek、OpenRouter 或自定义端点，一键清理口语、调整文风；也能就地翻译并替换选中文字。</p>
-      </div>
-      <div class="feature reveal" data-delay="4">
-        <div class="ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /><path d="M8 14h3" /><path d="M14 14h2" /></svg>
-        </div>
-        <h3>历史留在本机</h3>
-        <p>最近 90 天的转写记录保存在本机用户目录，可搜索、复制、查看、删除，不上传任何云端账号。</p>
-      </div>
-      <div class="feature reveal" data-delay="5">
-        <div class="ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M8 21h8" /><path d="M12 19v2" /><path d="M7 9h4" /><path d="M7 13h10" /></svg>
-        </div>
-        <h3>桌面原生工作流</h3>
-        <p>自定义全局热键、麦克风选择、状态 HUD、常驻胶囊、开机自启、更新检查，文字直接注入当前前台应用。</p>
-      </div>
-      <div class="feature reveal" data-delay="5">
-        <div class="ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a15 15 0 0 1 0 18" /><path d="M12 3a15 15 0 0 0 0 18" /></svg>
-        </div>
-        <h3>中英双语界面</h3>
-        <p>应用语言可在设置中随时切换；Linux 侧提供 AppImage 与 Omarchy/Arch 包，并内置 Hyprland 集成工作流。</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 隐私 -->
-<section id="privacy">
-  <div class="privacy">
-    <div class="wrap">
-      <div class="section-head reveal">
-        <div class="section-tag">03 — Privacy</div>
-        <h2>说清楚每一段数据去了哪</h2>
-        <p>语音识别、润色、翻译走的是你配置的云端端点，设备上不做模型推理。每一项都有明确边界：</p>
-      </div>
-      <div class="flow-priv">
-        <div class="priv-node reveal" data-delay="1">
-          <div class="num">SCOPE 01</div>
-          <h3>语音识别</h3>
-          <p>录制的音频上传到你配置的云端 ASR 端点，返回转写文本。关闭其他功能后，这是唯一的网络出口。</p>
-        </div>
-        <div class="priv-node reveal" data-delay="2">
-          <div class="num">SCOPE 02</div>
-          <h3>文本润色</h3>
-          <p>只发送识别出的最终文本——不是原始音频——到你配置的 LLM 提供商。</p>
-        </div>
-        <div class="priv-node reveal" data-delay="3">
-          <div class="num">SCOPE 03</div>
-          <h3>翻译替换</h3>
-          <p>只把选中的文字发给该提供商，并用返回结果替换选区，不附带其他上下文。</p>
-        </div>
-        <div class="priv-node reveal" data-delay="4">
-          <div class="num">SCOPE 04</div>
-          <h3>历史与密钥</h3>
-          <p>历史保存在应用本地用户数据目录；API Key 由主进程管理，绝不写入应用日志。</p>
-        </div>
-      </div>
-      <div class="priv-note reveal">
-        不需要润色和翻译时，可以直接关闭它们——芷若只保留语音识别一条网络链路。凭据与转写内容不出本机日志，你随时可以删掉全部历史。
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 技术栈与平台 -->
-<section class="section" id="tech">
-  <div class="wrap">
-    <div class="section-head reveal">
-      <div class="section-tag">04 — Under the Hood</div>
-      <h2>克制的架构，经得起折腾的开源</h2>
-      <p>Tauri 2 的 Rust 主进程掌管一切特权操作，渲染层只负责界面；MIT 许可，随便看、随便改。</p>
-    </div>
-    <div class="two-col">
-      <div class="panel reveal" data-delay="1">
-        <h3>技术栈</h3>
-        <p>系统 WebView 跑 React 界面，主进程以 Rust 编译，安装包与内存占用都保持轻量。</p>
-        <div class="chips">
-          <span class="chip">Tauri 2</span>
-          <span class="chip">Rust</span>
-          <span class="chip">TypeScript</span>
-          <span class="chip">React</span>
-          <span class="chip">Vite</span>
-          <span class="chip">shadcn/ui</span>
-          <span class="chip">OpenAI-compatible</span>
-          <span class="chip">MIT License</span>
-        </div>
-      </div>
-      <div class="panel reveal" data-delay="2">
-        <h3>平台支持</h3>
-        <p>同一份体验，三端打包；安装包发布在 GitHub Releases。</p>
-        <div class="platform-list">
-          <div class="plat">
-            <div class="p-ico">
-              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5 10.5 4.4v7.1H3V5.5Zm8.7-1.3L21 3v8.5h-9.3V4.2ZM3 12.5h7.5v7.1L3 18.5v-6Zm8.7 0H21V21l-9.3-1.3v-7.2Z" /></svg>
-            </div>
-            <div>
-              <b>Windows x64</b>
-              <span>安装包 .exe · 安装时 SmartScreen 可能提示未签名</span>
-            </div>
-          </div>
-          <div class="plat">
-            <div class="p-ico">
-              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.7 12.7c0-2 1.6-3 1.7-3.1-1-1.4-2.5-1.6-3-1.6-1.3-.1-2.5.8-3.1.8-.6 0-1.6-.7-2.7-.7-1.4 0-2.7.8-3.4 2-1.4 2.5-.4 6.3 1 8.4.7 1 1.5 2.1 2.5 2.1 1 0 1.4-.6 2.7-.6 1.2 0 1.6.6 2.7.6s1.8-1 2.4-2c.8-1.1 1.1-2.2 1.1-2.3-.1 0-2.2-.8-2.2-3.2l.3-.4ZM14.6 6.6c.5-.7.9-1.6.8-2.6-.8 0-1.8.5-2.4 1.2-.5.6-1 1.6-.8 2.5.9.1 1.8-.4 2.4-1.1Z" /></svg>
-            </div>
-            <div>
-              <b>macOS · Intel / Apple Silicon</b>
-              <span>磁盘镜像 .dmg · 需授予麦克风与辅助功能权限</span>
-            </div>
-          </div>
-          <div class="plat">
-            <div class="p-ico">
-              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2c-1.3 0-2.4 1.3-2.4 3.2 0 1.5.2 2.3-.3 3.3-.6 1.1-2 2.2-2.7 3.7-.7 1.5-.4 2.7-.9 3.3-.4.5-1.2.5-1.6 1-.4.6 0 1.4.7 1.8.4.2.4.6.2 1-.3.7-1 1.2-.7 1.9.3.6 1.4.5 2.4.3.4-.1.8.1 1.1.5.7.9 2 1.6 3.9 1.6s3.2-.7 3.9-1.6c.3-.4.7-.6 1.1-.5 1 .2 2.1.3 2.4-.3.3-.7-.4-1.2-.7-1.9-.2-.4-.2-.8.2-1 .7-.4 1.1-1.2.7-1.8-.4-.5-1.2-.5-1.6-1-.5-.6-.2-1.8-.9-3.3-.7-1.5-2.1-2.6-2.7-3.7-.5-1-.3-1.8-.3-3.3C14.4 3.3 13.3 2 12 2Zm-1.3 4.3c.4 0 .7.4.7 1s-.3 1-.7 1-.8-.4-.8-1 .4-1 .8-1Zm2.7 0c.4 0 .8.4.8 1s-.4 1-.8 1-.7-.4-.7-1 .3-1 .7-1Zm-1.4 3c.7 0 1.4.3 1.8.7-.6.5-1.2.8-1.8.8s-1.3-.3-1.9-.8c.5-.4 1.2-.7 1.9-.7Z" /></svg>
-            </div>
-            <div>
-              <b>Linux x86_64</b>
-              <span>AppImage · Omarchy / Arch 另有 pacman 包与 Hyprland 集成</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- CTA -->
-<section class="cta">
-  <div class="wrap">
-    <h2 class="reveal">让每一次开口，<br />都有文字回应</h2>
-    <p class="sub reveal" data-delay="1">
-      免费、开源、跨平台。把芷若装进你的桌面，按住说话，松开即成文。
-    </p>
-    <div class="cta-actions reveal" data-delay="2">
-      <a class="btn btn-primary" href="https://github.com/DaweiTian/zhiruo/releases/latest" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 11 5 5 5-5" /><path d="M5 21h14" /></svg>
-        下载芷若
-      </a>
-      <a class="btn btn-ghost" href="https://voicekey.buildwithais.com/" target="_blank" rel="noopener">
-        访问官网
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6" /><path d="m10 14 10-10" /><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4" /></svg>
-      </a>
-    </div>
-  </div>
-</section>
-</main>
-
-<footer>
-  <div class="wrap foot-inner">
-    <div class="foot-brand">
-      <svg viewBox="0 0 1024 1024"><use href="#zhiruo-icon" /></svg>
-      芷若 Zhiruo
-    </div>
-    <div class="foot-links">
-      <a href="https://github.com/DaweiTian/zhiruo" target="_blank" rel="noopener">GitHub</a>
-      <a href="https://github.com/DaweiTian/zhiruo/releases/latest" target="_blank" rel="noopener">下载</a>
-      <a href="https://voicekey.buildwithais.com/" target="_blank" rel="noopener">官网</a>
-      <a href="https://github.com/DaweiTian/zhiruo/issues" target="_blank" rel="noopener">反馈</a>
-    </div>
-    <div>MIT License · © Zhiruo contributors</div>
-  </div>
-  <div class="wrap foot-filing">
-    <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a15 15 0 0 1 0 18" /><path d="M12 3a15 15 0 0 0 0 18" /></svg>
-      宁ICP备2026000986号
-    </a>
-    <a href="https://beian.mps.gov.cn/#/query/webSearch?code=64030002260026" target="_blank" rel="noopener">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Z" /><path d="m9 12 2 2 4-4" /></svg>
-      宁公网安备64030002260026号
-    </a>
-  </div>
-</footer>
-
-<script>
-  // 打字机：模拟 HUD 流式出字
-  ;(function () {
-    const el = document.getElementById('typed')
-    if (!el) return
-    const lines = [
-      '今天下午三点开产品评审会，记得带上最新版的原型图。',
-      '帮我把这段话润色一下，意思不要变，语气自然一点。',
-      '把这句话翻译成英文，就地替换掉选中的文字。'
-    ]
-    let li = 0
-    let ci = 0
-    let deleting = false
-    function tick() {
-      const line = lines[li]
-      if (!deleting) {
-        ci += 1
-        el.textContent = line.slice(0, ci)
-        if (ci >= line.length) {
-          deleting = true
-          setTimeout(tick, 2200)
-          return
-        }
-        setTimeout(tick, 72 + Math.random() * 68)
-      } else {
-        ci -= 2
-        if (ci <= 0) {
-          ci = 0
-          deleting = false
-          li = (li + 1) % lines.length
-          setTimeout(tick, 420)
-          return
-        }
-        el.textContent = line.slice(0, ci)
-        setTimeout(tick, 26)
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>芷若 Zhiruo — 按住说话，松开即成文字</title>
+    <meta
+      name="description"
+      content="芷若（Zhiruo）是一款隐私优先的按住说话（Push-to-Talk）语音输入工具，支持 Windows、macOS 与 Linux。按住快捷键说话，松开即输入；自带云端识别与可选 AI 润色翻译，历史只留在本机。"
+    />
+    <meta property="og:title" content="芷若 Zhiruo — 按住说话，松开即成文字" />
+    <meta
+      property="og:description"
+      content="隐私优先的按住说话语音输入工具，Windows / macOS / Linux 开源免费。"
+    />
+    <meta property="og:type" content="website" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234E6B26'/%3E%3Cstop offset='1' stop-color='%2393B447'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1024' height='1024' rx='232' fill='url(%23g)'/%3E%3Cpath d='M296 728 C316 560 448 424 616 408 C596 576 464 712 296 728 Z' fill='%23F6FAEE'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      document.documentElement.classList.add('js')
+    </script>
+    <style>
+      :root {
+        --paper: #f6f4ec;
+        --paper-soft: #efebdf;
+        --ink: #22281c;
+        --ink-soft: #4c5344;
+        --muted: #79806c;
+        --line: rgba(34, 40, 28, 0.12);
+        --line-strong: rgba(34, 40, 28, 0.22);
+        --olive-deep: #2c3b1c;
+        --olive: #4e6b26;
+        --olive-mid: #6f9331;
+        --olive-light: #93b447;
+        --cream: #f6faee;
+        --glow: rgba(111, 147, 49, 0.28);
+        --radius: 14px;
+        --font-display: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+        --font-sans: 'Inter', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+        --font-mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace;
       }
-    }
-    tick()
-  })()
 
-  // 滚动浮现
-  ;(function () {
-    const items = document.querySelectorAll('.reveal')
-    if (!('IntersectionObserver' in window)) {
-      items.forEach(function (n) { n.classList.add('in') })
-      return
-    }
-    const io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        if (e.isIntersecting) {
-          e.target.classList.add('in')
-          io.unobserve(e.target)
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family: var(--font-sans);
+        color: var(--ink);
+        background: var(--paper);
+        line-height: 1.75;
+        -webkit-font-smoothing: antialiased;
+        overflow-x: hidden;
+      }
+
+      /* 纸张细纹理 */
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        opacity: 0.5;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.13 0 0 0 0 0.16 0 0 0 0 0.10 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      img,
+      svg {
+        display: block;
+      }
+
+      .wrap {
+        width: min(1120px, calc(100% - 48px));
+        margin-inline: auto;
+        position: relative;
+        z-index: 1;
+      }
+
+      /* ============ 顶部导航 ============ */
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        background: rgba(246, 244, 236, 0.78);
+        border-bottom: 1px solid var(--line);
+      }
+      .nav-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 64px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 1.15rem;
+        letter-spacing: 0.04em;
+      }
+      .brand svg {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        box-shadow: 0 4px 14px var(--glow);
+      }
+      .brand small {
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        font-weight: 400;
+        letter-spacing: 0.14em;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        border-radius: 99px;
+        padding: 2px 9px;
+        margin-left: 2px;
+      }
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 26px;
+        font-size: 0.88rem;
+        color: var(--ink-soft);
+      }
+      .nav-links > a:not(.nav-cta) {
+        position: relative;
+        padding: 4px 0;
+        transition: color 0.25s;
+      }
+      .nav-links > a:not(.nav-cta)::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        height: 1px;
+        background: var(--olive-mid);
+        transform: scaleX(0);
+        transform-origin: left;
+        transition: transform 0.3s ease;
+      }
+      .nav-links > a:not(.nav-cta):hover {
+        color: var(--olive);
+      }
+      .nav-links > a:not(.nav-cta):hover::after {
+        transform: scaleX(1);
+      }
+      .nav-cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 18px;
+        border-radius: 99px;
+        background: var(--olive-deep);
+        color: var(--cream) !important;
+        font-size: 0.84rem;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        transition:
+          transform 0.25s,
+          background 0.25s,
+          box-shadow 0.25s;
+      }
+      .nav-cta:hover {
+        background: var(--olive);
+        color: var(--cream) !important;
+        transform: translateY(-1px);
+        box-shadow: 0 10px 24px var(--glow);
+      }
+
+      /* ============ Hero ============ */
+      .hero {
+        position: relative;
+        padding: 88px 0 72px;
+      }
+      .hero-grid {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 56px;
+        align-items: center;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--olive);
+        border: 1px solid rgba(111, 147, 49, 0.35);
+        background: rgba(111, 147, 49, 0.08);
+        border-radius: 99px;
+        padding: 7px 16px;
+        margin-bottom: 28px;
+      }
+      .eyebrow .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--olive-mid);
+        box-shadow: 0 0 0 0 rgba(111, 147, 49, 0.5);
+        animation: pulse 2.2s infinite;
+      }
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(111, 147, 49, 0.45);
         }
-      })
-    }, { threshold: 0.12, rootMargin: '0px 0px -6% 0px' })
-    items.forEach(function (n) { io.observe(n) })
-  })()
-</script>
-</body>
+        70% {
+          box-shadow: 0 0 0 9px rgba(111, 147, 49, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(111, 147, 49, 0);
+        }
+      }
+      .hero h1 {
+        font-family: var(--font-display);
+        font-size: clamp(2.9rem, 6.2vw, 4.6rem);
+        font-weight: 700;
+        line-height: 1.12;
+        letter-spacing: 0.02em;
+        margin-bottom: 20px;
+      }
+      .hero h1 .en {
+        display: block;
+        font-family: var(--font-mono);
+        font-size: clamp(0.82rem, 1.3vw, 1rem);
+        font-weight: 400;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-top: 14px;
+        white-space: nowrap;
+      }
+      .hero h1 .grad {
+        background: linear-gradient(
+          115deg,
+          var(--olive) 0%,
+          var(--olive-light) 60%,
+          var(--olive-mid) 100%
+        );
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .slogan {
+        font-family: var(--font-display);
+        font-size: clamp(1.12rem, 2vw, 1.35rem);
+        color: var(--olive-deep);
+        margin-bottom: 18px;
+        letter-spacing: 0.12em;
+      }
+      .slogan span {
+        display: block;
+        font-family: var(--font-sans);
+        font-size: 0.86rem;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+      .lede {
+        font-size: 1.02rem;
+        color: var(--ink-soft);
+        max-width: 34em;
+        margin-bottom: 36px;
+      }
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-bottom: 40px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 15px 28px;
+        border-radius: 12px;
+        font-size: 0.95rem;
+        font-weight: 500;
+        transition:
+          transform 0.25s,
+          box-shadow 0.25s,
+          background 0.25s,
+          border-color 0.25s;
+        border: 1px solid transparent;
+        cursor: pointer;
+      }
+      .btn svg {
+        width: 18px;
+        height: 18px;
+      }
+      .btn-primary {
+        background: linear-gradient(135deg, var(--olive-deep), var(--olive));
+        color: var(--cream);
+        box-shadow: 0 14px 32px var(--glow);
+      }
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 18px 40px rgba(111, 147, 49, 0.4);
+      }
+      .btn-ghost {
+        border-color: var(--line-strong);
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.45);
+      }
+      .btn-ghost:hover {
+        transform: translateY(-2px);
+        border-color: var(--olive-mid);
+        background: rgba(111, 147, 49, 0.08);
+      }
+
+      .meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 22px;
+        font-family: var(--font-mono);
+        font-size: 0.74rem;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      .meta-row b {
+        color: var(--olive-deep);
+        font-weight: 500;
+      }
+
+      /* Hero 右侧视觉 */
+      .hero-visual {
+        position: relative;
+        min-height: 548px;
+      }
+      .icon-orb {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 152px;
+        height: 152px;
+        filter: drop-shadow(0 24px 48px var(--glow));
+        animation: float 7s ease-in-out infinite;
+      }
+      @keyframes float {
+        0%,
+        100% {
+          transform: translateX(-50%) translateY(0);
+        }
+        50% {
+          transform: translateX(-50%) translateY(-14px);
+        }
+      }
+
+      .hud-card {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 238px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 22px 24px;
+        box-shadow: 0 28px 60px rgba(34, 40, 28, 0.1);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .hud-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+      .hud-title {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      .rec {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        letter-spacing: 0.1em;
+        color: var(--olive);
+        background: rgba(111, 147, 49, 0.12);
+        border: 1px solid rgba(111, 147, 49, 0.3);
+        padding: 4px 11px;
+        border-radius: 99px;
+      }
+      .rec i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--olive-mid);
+        animation: pulse 1.6s infinite;
+      }
+      .hud-text {
+        font-family: var(--font-display);
+        font-size: 1.22rem;
+        line-height: 1.9;
+        color: var(--ink);
+        min-height: 4.6em;
+      }
+      .hud-text .cursor {
+        display: inline-block;
+        width: 2px;
+        height: 1.1em;
+        background: var(--olive-mid);
+        vertical-align: -0.15em;
+        margin-left: 2px;
+        animation: blink 1s steps(1) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      .wave {
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        height: 34px;
+        margin-top: 18px;
+      }
+      .wave i {
+        flex: 1;
+        border-radius: 3px;
+        background: linear-gradient(180deg, var(--olive-light), var(--olive));
+        animation: eq 1.15s ease-in-out infinite;
+        opacity: 0.85;
+        min-width: 3px;
+      }
+      @keyframes eq {
+        0%,
+        100% {
+          height: 22%;
+        }
+        50% {
+          height: 100%;
+        }
+      }
+
+      .chip-float {
+        position: absolute;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        border-radius: 12px;
+        background: var(--olive-deep);
+        color: var(--cream);
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+        box-shadow: 0 16px 36px rgba(44, 59, 28, 0.3);
+        white-space: nowrap;
+      }
+      .chip-float.kbd {
+        top: 172px;
+        left: -6px;
+        animation: float2 6s ease-in-out infinite;
+      }
+      .chip-float.paste {
+        bottom: 2px;
+        right: -6px;
+        background: #fff;
+        color: var(--olive-deep);
+        border: 1px solid var(--line);
+        animation: float2 7.4s ease-in-out infinite reverse;
+      }
+      @keyframes float2 {
+        0%,
+        100% {
+          transform: translateY(0) rotate(-1.2deg);
+        }
+        50% {
+          transform: translateY(-10px) rotate(-1.2deg);
+        }
+      }
+
+      /* ============ 通用节标题 ============ */
+      section {
+        position: relative;
+        z-index: 1;
+      }
+      .section {
+        padding: 88px 0;
+      }
+      .section-head {
+        max-width: 640px;
+        margin-bottom: 52px;
+      }
+      .section-tag {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--olive);
+        margin-bottom: 16px;
+      }
+      .section-tag::before {
+        content: '';
+        width: 28px;
+        height: 1px;
+        background: var(--olive-mid);
+      }
+      .section-head h2 {
+        font-family: var(--font-display);
+        font-size: clamp(1.85rem, 3.4vw, 2.55rem);
+        font-weight: 700;
+        line-height: 1.3;
+        letter-spacing: 0.03em;
+        margin-bottom: 16px;
+      }
+      .section-head p {
+        color: var(--ink-soft);
+        font-size: 1.02rem;
+      }
+
+      /* ============ 流程 ============ */
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+        counter-reset: step;
+      }
+      .flow-card {
+        position: relative;
+        background: rgba(255, 255, 255, 0.55);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 26px 20px 24px;
+        transition:
+          transform 0.35s,
+          border-color 0.35s,
+          box-shadow 0.35s;
+        overflow: hidden;
+      }
+      .flow-card::before {
+        counter-increment: step;
+        content: '0' counter(step);
+        display: block;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.18em;
+        color: var(--olive-mid);
+        margin-bottom: 18px;
+      }
+      .flow-card::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(160deg, rgba(111, 147, 49, 0.1), transparent 55%);
+        opacity: 0;
+        transition: opacity 0.35s;
+        pointer-events: none;
+      }
+      .flow-card:hover {
+        transform: translateY(-5px);
+        border-color: rgba(111, 147, 49, 0.4);
+        box-shadow: 0 22px 44px rgba(34, 40, 28, 0.1);
+      }
+      .flow-card:hover::after {
+        opacity: 1;
+      }
+      .flow-card h3 {
+        font-family: var(--font-display);
+        font-size: 1.06rem;
+        margin-bottom: 8px;
+        letter-spacing: 0.04em;
+      }
+      .flow-card p {
+        font-size: 0.86rem;
+        color: var(--ink-soft);
+        line-height: 1.7;
+      }
+
+      /* ============ 特性 ============ */
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+      }
+      .feature {
+        position: relative;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 32px 28px;
+        background: rgba(255, 255, 255, 0.5);
+        transition:
+          transform 0.35s,
+          box-shadow 0.35s,
+          border-color 0.35s,
+          background 0.35s;
+        overflow: hidden;
+      }
+      .feature:hover {
+        transform: translateY(-6px);
+        border-color: rgba(111, 147, 49, 0.42);
+        background: rgba(255, 255, 255, 0.85);
+        box-shadow: 0 26px 52px rgba(34, 40, 28, 0.12);
+      }
+      .feature .ico {
+        width: 48px;
+        height: 48px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(145deg, rgba(111, 147, 49, 0.16), rgba(111, 147, 49, 0.05));
+        border: 1px solid rgba(111, 147, 49, 0.22);
+        margin-bottom: 20px;
+        color: var(--olive);
+      }
+      .feature .ico svg {
+        width: 23px;
+        height: 23px;
+      }
+      .feature h3 {
+        font-family: var(--font-display);
+        font-size: 1.14rem;
+        letter-spacing: 0.04em;
+        margin-bottom: 10px;
+      }
+      .feature p {
+        font-size: 0.9rem;
+        color: var(--ink-soft);
+      }
+
+      /* ============ 提供商走马灯 ============ */
+      .marquee-sec {
+        padding: 26px 0;
+        border-block: 1px solid var(--line);
+        background: rgba(111, 147, 49, 0.05);
+        overflow: hidden;
+      }
+      .marquee {
+        display: flex;
+        gap: 0;
+        width: max-content;
+        animation: slide 36s linear infinite;
+        font-family: var(--font-mono);
+        font-size: 0.86rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--olive-deep);
+      }
+      .marquee span {
+        display: inline-flex;
+        align-items: center;
+        gap: 28px;
+        padding-right: 28px;
+        white-space: nowrap;
+      }
+      .marquee span::after {
+        content: '◦';
+        color: var(--olive-mid);
+      }
+      @keyframes slide {
+        to {
+          transform: translateX(-50%);
+        }
+      }
+
+      /* ============ 隐私（深色） ============ */
+      .privacy {
+        background:
+          radial-gradient(1100px 500px at 82% -10%, rgba(147, 180, 71, 0.22), transparent 60%),
+          radial-gradient(900px 480px at 8% 110%, rgba(78, 107, 38, 0.35), transparent 60%),
+          var(--olive-deep);
+        color: var(--cream);
+        border-radius: 28px;
+        padding: 76px 0;
+        margin: 40px 0;
+        overflow: hidden;
+      }
+      .privacy .section-tag {
+        color: var(--olive-light);
+      }
+      .privacy .section-tag::before {
+        background: var(--olive-light);
+      }
+      .privacy .section-head h2 {
+        color: var(--cream);
+      }
+      .privacy .section-head p {
+        color: rgba(246, 250, 238, 0.72);
+      }
+
+      .flow-priv {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-top: 8px;
+      }
+      .priv-node {
+        position: relative;
+        border: 1px solid rgba(246, 250, 238, 0.18);
+        background: rgba(246, 250, 238, 0.06);
+        border-radius: 16px;
+        padding: 26px 22px;
+        transition:
+          border-color 0.3s,
+          background 0.3s,
+          transform 0.3s;
+      }
+      .priv-node:hover {
+        transform: translateY(-4px);
+        border-color: rgba(147, 180, 71, 0.55);
+        background: rgba(246, 250, 238, 0.1);
+      }
+      .priv-node .num {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        letter-spacing: 0.2em;
+        color: var(--olive-light);
+        margin-bottom: 14px;
+      }
+      .priv-node h3 {
+        font-family: var(--font-display);
+        font-size: 1.05rem;
+        letter-spacing: 0.05em;
+        margin-bottom: 10px;
+      }
+      .priv-node p {
+        font-size: 0.85rem;
+        line-height: 1.75;
+        color: rgba(246, 250, 238, 0.72);
+      }
+      .priv-note {
+        margin-top: 34px;
+        padding: 20px 24px;
+        border-left: 3px solid var(--olive-light);
+        background: rgba(246, 250, 238, 0.07);
+        border-radius: 0 12px 12px 0;
+        font-size: 0.9rem;
+        color: rgba(246, 250, 238, 0.85);
+        line-height: 1.85;
+      }
+
+      /* ============ 技术栈 / 平台 ============ */
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 22px;
+        align-items: stretch;
+      }
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 36px 34px;
+        background: rgba(255, 255, 255, 0.55);
+      }
+      .panel h3 {
+        font-family: var(--font-display);
+        font-size: 1.35rem;
+        letter-spacing: 0.05em;
+        margin-bottom: 14px;
+      }
+      .panel > p {
+        color: var(--ink-soft);
+        font-size: 0.94rem;
+        margin-bottom: 24px;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .chip {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        letter-spacing: 0.04em;
+        padding: 9px 15px;
+        border-radius: 99px;
+        border: 1px solid var(--line-strong);
+        color: var(--ink-soft);
+        background: rgba(255, 255, 255, 0.6);
+        transition:
+          border-color 0.25s,
+          color 0.25s,
+          transform 0.25s;
+      }
+      .chip:hover {
+        border-color: var(--olive-mid);
+        color: var(--olive-deep);
+        transform: translateY(-2px);
+      }
+      .platform-list {
+        display: grid;
+        gap: 12px;
+      }
+      .plat {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.5);
+        transition:
+          border-color 0.3s,
+          transform 0.3s;
+      }
+      .plat:hover {
+        border-color: rgba(111, 147, 49, 0.45);
+        transform: translateX(4px);
+      }
+      .plat .p-ico {
+        width: 42px;
+        height: 42px;
+        flex: none;
+        border-radius: 11px;
+        display: grid;
+        place-items: center;
+        background: rgba(111, 147, 49, 0.12);
+        color: var(--olive);
+      }
+      .plat .p-ico svg {
+        width: 21px;
+        height: 21px;
+      }
+      .plat b {
+        display: block;
+        font-size: 0.96rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .plat span {
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+
+      /* ============ CTA ============ */
+      .cta {
+        text-align: center;
+        padding: 96px 0 88px;
+        position: relative;
+        overflow: hidden;
+      }
+      .cta::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 12%;
+        width: 620px;
+        height: 620px;
+        transform: translateX(-50%);
+        background: radial-gradient(circle, rgba(111, 147, 49, 0.16), transparent 68%);
+        pointer-events: none;
+      }
+      .cta h2 {
+        font-family: var(--font-display);
+        font-size: clamp(1.95rem, 4vw, 2.9rem);
+        letter-spacing: 0.06em;
+        line-height: 1.35;
+        margin-bottom: 16px;
+      }
+      .cta .sub {
+        color: var(--ink-soft);
+        max-width: 33em;
+        margin: 0 auto 36px;
+        font-size: 1.02rem;
+      }
+      .cta-actions {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 14px;
+      }
+
+      /* ============ 页脚 ============ */
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 36px 0 48px;
+      }
+      .foot-inner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+      .foot-links {
+        display: flex;
+        gap: 22px;
+      }
+      .foot-links a {
+        transition: color 0.25s;
+      }
+      .foot-links a:hover {
+        color: var(--olive);
+      }
+      .foot-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--font-display);
+        color: var(--ink);
+        letter-spacing: 0.08em;
+      }
+      .foot-brand svg {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+      }
+      .foot-filing {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 8px 22px;
+        margin-top: 22px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+      .foot-filing a {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        transition: color 0.25s;
+      }
+      .foot-filing a:hover {
+        color: var(--olive);
+      }
+      .foot-filing svg {
+        width: 15px;
+        height: 15px;
+        opacity: 0.75;
+      }
+
+      /* ============ 滚动浮现（无 JS 时保持可见） ============ */
+      html.js .reveal {
+        opacity: 0;
+        transform: translateY(26px);
+        transition:
+          opacity 0.85s cubic-bezier(0.22, 1, 0.36, 1),
+          transform 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      html.js .reveal.in {
+        opacity: 1;
+        transform: none;
+      }
+      html.js .reveal[data-delay='1'] {
+        transition-delay: 0.08s;
+      }
+      html.js .reveal[data-delay='2'] {
+        transition-delay: 0.16s;
+      }
+      html.js .reveal[data-delay='3'] {
+        transition-delay: 0.24s;
+      }
+      html.js .reveal[data-delay='4'] {
+        transition-delay: 0.32s;
+      }
+      html.js .reveal[data-delay='5'] {
+        transition-delay: 0.4s;
+      }
+
+      /* ============ 响应式 ============ */
+      @media (max-width: 980px) {
+        .hero-grid {
+          grid-template-columns: 1fr;
+          gap: 48px;
+        }
+        .hero-visual {
+          min-height: 440px;
+          max-width: 480px;
+          margin-inline: auto;
+          width: 100%;
+        }
+        .flow {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .features {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .flow-priv {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .two-col {
+          grid-template-columns: 1fr;
+        }
+        .nav-links a:not(.nav-cta) {
+          display: none;
+        }
+      }
+      @media (max-width: 620px) {
+        .wrap {
+          width: calc(100% - 32px);
+        }
+        .hero {
+          padding: 56px 0 48px;
+        }
+        .hero h1 .en {
+          white-space: normal;
+          letter-spacing: 0.18em;
+        }
+        .section {
+          padding: 64px 0;
+        }
+        .flow,
+        .features,
+        .flow-priv {
+          grid-template-columns: 1fr;
+        }
+        .chip-float.kbd {
+          left: 0;
+        }
+        .chip-float.paste {
+          right: 0;
+        }
+        .hero-actions .btn {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+        .reveal {
+          opacity: 1;
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 图标精灵 -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <linearGradient id="zg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#4E6B26" />
+          <stop offset="0.55" stop-color="#6F9331" />
+          <stop offset="1" stop-color="#93B447" />
+        </linearGradient>
+        <radialGradient id="zs" cx="0.28" cy="0.2" r="0.9">
+          <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.2" />
+          <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0.04" />
+          <stop offset="1" stop-color="#FFFFFF" stop-opacity="0" />
+        </radialGradient>
+        <symbol id="zhiruo-icon" viewBox="0 0 1024 1024">
+          <rect width="1024" height="1024" rx="232" fill="url(#zg)" />
+          <rect width="1024" height="1024" rx="232" fill="url(#zs)" />
+          <g transform="translate(-44 44)">
+            <path d="M296 728 C316 560 448 424 616 408 C596 576 464 712 296 728 Z" fill="#F6FAEE" />
+            <path
+              d="M606 298 A110 110 0 0 1 726 418"
+              fill="none"
+              stroke="#F6FAEE"
+              stroke-width="56"
+              stroke-linecap="round"
+            />
+            <path
+              d="M599 219 A190 190 0 0 1 805 425"
+              fill="none"
+              stroke="#F6FAEE"
+              stroke-width="44"
+              stroke-linecap="round"
+            />
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <!-- 导航 -->
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="brand" href="#top" aria-label="芷若首页">
+          <svg viewBox="0 0 1024 1024"><use href="#zhiruo-icon" /></svg>
+          芷若
+          <small>ZHIRUO</small>
+        </a>
+        <nav class="nav-links" aria-label="页面导航">
+          <a href="#how">如何工作</a>
+          <a href="#features">核心特性</a>
+          <a href="#privacy">隐私</a>
+          <a href="#tech">技术栈</a>
+          <a
+            class="nav-cta"
+            href="https://github.com/DaweiTian/zhiruo/releases/latest"
+            target="_blank"
+            rel="noopener"
+          >
+            下载
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 3v12" />
+              <path d="m7 11 5 5 5-5" />
+              <path d="M5 21h14" />
+            </svg>
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Hero -->
+    <main id="top">
+      <section class="hero">
+        <div class="wrap hero-grid">
+          <div>
+            <div class="eyebrow reveal in">
+              <span class="dot"></span>
+              开源 · 免费 · v0.16.0
+            </div>
+            <h1 class="reveal in" data-delay="1">
+              按住说话，<br /><span class="grad">松开即成文字</span>
+              <span class="en">Zhiruo · Push&#8209;to&#8209;Talk Voice Input</span>
+            </h1>
+            <p class="slogan reveal in" data-delay="2">
+              言若有声，芷若知心。
+              <span>Where voice finds words, and Zhiruo finds heart.</span>
+            </p>
+            <p class="lede reveal in" data-delay="3">
+              芷若是一款隐私优先的桌面语音输入工具，支持 Windows、macOS 与 Linux。
+              按住快捷键说话、松开即出字，文字直接落到光标所在的任意应用； 自带云端识别与可选的 AI
+              润色、翻译，历史记录只留在你自己的电脑上。
+            </p>
+            <div class="hero-actions reveal in" data-delay="4">
+              <a
+                class="btn btn-primary"
+                href="https://github.com/DaweiTian/zhiruo/releases/latest"
+                target="_blank"
+                rel="noopener"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3v12" />
+                  <path d="m7 11 5 5 5-5" />
+                  <path d="M5 21h14" />
+                </svg>
+                免费下载
+              </a>
+              <a
+                class="btn btn-ghost"
+                href="https://github.com/DaweiTian/zhiruo"
+                target="_blank"
+                rel="noopener"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path
+                    d="M12 .5C5.73.5.9 5.33.9 11.6c0 4.9 3.17 9.05 7.57 10.51.55.1.75-.24.75-.53v-1.86c-3.08.67-3.73-1.49-3.73-1.49-.5-1.28-1.23-1.62-1.23-1.62-1.01-.69.08-.67.08-.67 1.11.08 1.7 1.14 1.7 1.14.99 1.7 2.6 1.21 3.23.93.1-.72.39-1.21.7-1.49-2.46-.28-5.05-1.23-5.05-5.47 0-1.21.43-2.2 1.14-2.98-.11-.28-.49-1.41.11-2.93 0 0 .93-.3 3.04 1.13a10.5 10.5 0 0 1 5.53 0c2.1-1.43 3.03-1.13 3.03-1.13.6 1.52.22 2.65.11 2.93.71.78 1.14 1.77 1.14 2.98 0 4.25-2.6 5.18-5.07 5.46.4.34.75 1.02.75 2.06v3.05c0 .29.2.64.76.53 4.39-1.47 7.56-5.61 7.56-10.51C23.1 5.33 18.27.5 12 .5Z"
+                  />
+                </svg>
+                查看源码
+              </a>
+            </div>
+            <div class="meta-row reveal in" data-delay="5">
+              <span><b>Windows</b> · <b>macOS</b> · <b>Linux</b></span>
+              <span><b>MIT</b> 开源许可</span>
+              <span><b>Tauri 2</b> + Rust + React</span>
+            </div>
+          </div>
+
+          <div class="hero-visual reveal in" data-delay="2">
+            <svg class="icon-orb" viewBox="0 0 1024 1024" aria-label="芷若应用图标">
+              <use href="#zhiruo-icon" />
+            </svg>
+
+            <div class="chip-float kbd">
+              <svg
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="6" width="20" height="12" rx="2" />
+                <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
+              </svg>
+              按住 Ctrl+Shift+Space
+            </div>
+
+            <div class="hud-card">
+              <div class="hud-head">
+                <div class="hud-title">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                    <path d="M12 19v3" />
+                  </svg>
+                  live transcript
+                </div>
+                <div class="rec"><i></i>REC</div>
+              </div>
+              <div class="hud-text"><span id="typed"></span><span class="cursor"></span></div>
+              <div class="wave" aria-hidden="true">
+                <i style="animation-delay: 0s"></i><i style="animation-delay: 0.07s"></i
+                ><i style="animation-delay: 0.14s"></i><i style="animation-delay: 0.21s"></i
+                ><i style="animation-delay: 0.28s"></i><i style="animation-delay: 0.35s"></i
+                ><i style="animation-delay: 0.42s"></i><i style="animation-delay: 0.49s"></i
+                ><i style="animation-delay: 0.56s"></i><i style="animation-delay: 0.63s"></i
+                ><i style="animation-delay: 0.7s"></i><i style="animation-delay: 0.77s"></i
+                ><i style="animation-delay: 0.84s"></i><i style="animation-delay: 0.91s"></i
+                ><i style="animation-delay: 0.98s"></i><i style="animation-delay: 1.05s"></i
+                ><i style="animation-delay: 1.12s"></i><i style="animation-delay: 1.19s"></i
+                ><i style="animation-delay: 1.26s"></i><i style="animation-delay: 1.33s"></i
+                ><i style="animation-delay: 1.4s"></i><i style="animation-delay: 1.47s"></i
+                ><i style="animation-delay: 1.54s"></i><i style="animation-delay: 1.61s"></i
+                ><i style="animation-delay: 1.68s"></i><i style="animation-delay: 1.75s"></i
+                ><i style="animation-delay: 1.82s"></i><i style="animation-delay: 1.89s"></i>
+              </div>
+            </div>
+
+            <div class="chip-float paste">
+              <svg
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="8" y="4" width="12" height="16" rx="2" />
+                <path d="M4 8v10a2 2 0 0 0 2 2h6" />
+              </svg>
+              松开 → 输入光标处
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 工作方式 -->
+      <section class="section" id="how">
+        <div class="wrap">
+          <div class="section-head reveal">
+            <div class="section-tag">01 — Workflow</div>
+            <h2>五步之内，说完即成文</h2>
+            <p>
+              主进程持有麦克风、热键、凭据、历史与文本注入；识别在云端完成，界面永远不被推理阻塞。
+            </p>
+          </div>
+          <div class="flow">
+            <div class="flow-card reveal" data-delay="1">
+              <h3>按住热键</h3>
+              <p>
+                默认 Windows / Linux 为 Ctrl+Shift+Space，macOS 为 Option。全部快捷键可在设置里改。
+              </p>
+            </div>
+            <div class="flow-card reveal" data-delay="2">
+              <h3>开口说话</h3>
+              <p>只在按住期间录音，松手即停。麦克风可在设置中自由选择。</p>
+            </div>
+            <div class="flow-card reveal" data-delay="3">
+              <h3>云端识别</h3>
+              <p>音频送入你配置的 ASR 端点，流式返回，模型自带标点。</p>
+            </div>
+            <div class="flow-card reveal" data-delay="4">
+              <h3>润色翻译</h3>
+              <p>可选：用你自己的 LLM 清理口语、调整风格，或就地翻译选中文字。</p>
+            </div>
+            <div class="flow-card reveal" data-delay="5">
+              <h3>输入并留存</h3>
+              <p>结果直接注入光标所在应用，并保存到本机历史（90 天）。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 提供商走马灯 -->
+      <div class="marquee-sec" aria-hidden="true">
+        <div class="marquee" id="marquee">
+          <span>MiMo</span><span>Qwen · DashScope</span><span>Doubao Ark</span><span>OpenAI</span
+          ><span>DeepSeek</span><span>OpenRouter</span><span>Custom Endpoint</span
+          ><span>Streaming ASR</span> <span>MiMo</span><span>Qwen · DashScope</span
+          ><span>Doubao Ark</span><span>OpenAI</span><span>DeepSeek</span><span>OpenRouter</span
+          ><span>Custom Endpoint</span><span>Streaming ASR</span>
+        </div>
+      </div>
+
+      <!-- 核心特性 -->
+      <section class="section" id="features">
+        <div class="wrap">
+          <div class="section-head reveal">
+            <div class="section-tag">02 — Features</div>
+            <h2>把语音输入做成一种习惯</h2>
+            <p>不打断心流的桌面原生体验：快捷键唤起、流式出字、就地润色，凭据与历史都留在本地。</p>
+          </div>
+          <div class="features">
+            <div class="feature reveal" data-delay="1">
+              <div class="ico">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <path d="M12 19v3" />
+                </svg>
+              </div>
+              <h3>按住说，松开写</h3>
+              <p>
+                全局 Push-to-Talk 热键，边说边出字的流式
+                HUD，标点由模型原生生成。说完的瞬间，文字已经落在光标处。
+              </p>
+            </div>
+            <div class="feature reveal" data-delay="2">
+              <div class="ico">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4 7h16" />
+                  <path d="M4 12h10" />
+                  <path d="M4 17h7" />
+                  <circle cx="18" cy="16" r="3" />
+                  <path d="m21 19-1.8-1.8" />
+                </svg>
+              </div>
+              <h3>自带识别服务</h3>
+              <p>
+                内置 MiMo、通义千问、豆包 Ark、OpenAI 等预设，也可填任意 OpenAI 兼容的 Base
+                URL、模型与 API Key。
+              </p>
+            </div>
+            <div class="feature reveal" data-delay="3">
+              <div class="ico">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
+                  <path d="M19 15l.9 2.6L22.5 18.5l-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9L19 15Z" />
+                </svg>
+              </div>
+              <h3>可选 AI 润色与翻译</h3>
+              <p>
+                接入 OpenAI、DeepSeek、OpenRouter
+                或自定义端点，一键清理口语、调整文风；也能就地翻译并替换选中文字。
+              </p>
+            </div>
+            <div class="feature reveal" data-delay="4">
+              <div class="ico">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path d="M3 9h18" />
+                  <path d="M8 14h3" />
+                  <path d="M14 14h2" />
+                </svg>
+              </div>
+              <h3>历史留在本机</h3>
+              <p>
+                最近 90
+                天的转写记录保存在本机用户目录，可搜索、复制、查看、删除，不上传任何云端账号。
+              </p>
+            </div>
+            <div class="feature reveal" data-delay="5">
+              <div class="ico">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d="M8 21h8" />
+                  <path d="M12 19v2" />
+                  <path d="M7 9h4" />
+                  <path d="M7 13h10" />
+                </svg>
+              </div>
+              <h3>桌面原生工作流</h3>
+              <p>
+                自定义全局热键、麦克风选择、状态
+                HUD、常驻胶囊、开机自启、更新检查，文字直接注入当前前台应用。
+              </p>
+            </div>
+            <div class="feature reveal" data-delay="5">
+              <div class="ico">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M3 12h18" />
+                  <path d="M12 3a15 15 0 0 1 0 18" />
+                  <path d="M12 3a15 15 0 0 0 0 18" />
+                </svg>
+              </div>
+              <h3>中英双语界面</h3>
+              <p>
+                应用语言可在设置中随时切换；Linux 侧提供 AppImage 与 Omarchy/Arch 包，并内置
+                Hyprland 集成工作流。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 隐私 -->
+      <section id="privacy">
+        <div class="privacy">
+          <div class="wrap">
+            <div class="section-head reveal">
+              <div class="section-tag">03 — Privacy</div>
+              <h2>说清楚每一段数据去了哪</h2>
+              <p>
+                语音识别、润色、翻译走的是你配置的云端端点，设备上不做模型推理。每一项都有明确边界：
+              </p>
+            </div>
+            <div class="flow-priv">
+              <div class="priv-node reveal" data-delay="1">
+                <div class="num">SCOPE 01</div>
+                <h3>语音识别</h3>
+                <p>
+                  录制的音频上传到你配置的云端 ASR
+                  端点，返回转写文本。关闭其他功能后，这是唯一的网络出口。
+                </p>
+              </div>
+              <div class="priv-node reveal" data-delay="2">
+                <div class="num">SCOPE 02</div>
+                <h3>文本润色</h3>
+                <p>只发送识别出的最终文本——不是原始音频——到你配置的 LLM 提供商。</p>
+              </div>
+              <div class="priv-node reveal" data-delay="3">
+                <div class="num">SCOPE 03</div>
+                <h3>翻译替换</h3>
+                <p>只把选中的文字发给该提供商，并用返回结果替换选区，不附带其他上下文。</p>
+              </div>
+              <div class="priv-node reveal" data-delay="4">
+                <div class="num">SCOPE 04</div>
+                <h3>历史与密钥</h3>
+                <p>历史保存在应用本地用户数据目录；API Key 由主进程管理，绝不写入应用日志。</p>
+              </div>
+            </div>
+            <div class="priv-note reveal">
+              不需要润色和翻译时，可以直接关闭它们——芷若只保留语音识别一条网络链路。凭据与转写内容不出本机日志，你随时可以删掉全部历史。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 技术栈与平台 -->
+      <section class="section" id="tech">
+        <div class="wrap">
+          <div class="section-head reveal">
+            <div class="section-tag">04 — Under the Hood</div>
+            <h2>克制的架构，经得起折腾的开源</h2>
+            <p>
+              Tauri 2 的 Rust 主进程掌管一切特权操作，渲染层只负责界面；MIT 许可，随便看、随便改。
+            </p>
+          </div>
+          <div class="two-col">
+            <div class="panel reveal" data-delay="1">
+              <h3>技术栈</h3>
+              <p>系统 WebView 跑 React 界面，主进程以 Rust 编译，安装包与内存占用都保持轻量。</p>
+              <div class="chips">
+                <span class="chip">Tauri 2</span>
+                <span class="chip">Rust</span>
+                <span class="chip">TypeScript</span>
+                <span class="chip">React</span>
+                <span class="chip">Vite</span>
+                <span class="chip">shadcn/ui</span>
+                <span class="chip">OpenAI-compatible</span>
+                <span class="chip">MIT License</span>
+              </div>
+            </div>
+            <div class="panel reveal" data-delay="2">
+              <h3>平台支持</h3>
+              <p>同一份体验，三端打包；安装包发布在 GitHub Releases。</p>
+              <div class="platform-list">
+                <div class="plat">
+                  <div class="p-ico">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path
+                        d="M3 5.5 10.5 4.4v7.1H3V5.5Zm8.7-1.3L21 3v8.5h-9.3V4.2ZM3 12.5h7.5v7.1L3 18.5v-6Zm8.7 0H21V21l-9.3-1.3v-7.2Z"
+                      />
+                    </svg>
+                  </div>
+                  <div>
+                    <b>Windows x64</b>
+                    <span>安装包 .exe · 安装时 SmartScreen 可能提示未签名</span>
+                  </div>
+                </div>
+                <div class="plat">
+                  <div class="p-ico">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path
+                        d="M16.7 12.7c0-2 1.6-3 1.7-3.1-1-1.4-2.5-1.6-3-1.6-1.3-.1-2.5.8-3.1.8-.6 0-1.6-.7-2.7-.7-1.4 0-2.7.8-3.4 2-1.4 2.5-.4 6.3 1 8.4.7 1 1.5 2.1 2.5 2.1 1 0 1.4-.6 2.7-.6 1.2 0 1.6.6 2.7.6s1.8-1 2.4-2c.8-1.1 1.1-2.2 1.1-2.3-.1 0-2.2-.8-2.2-3.2l.3-.4ZM14.6 6.6c.5-.7.9-1.6.8-2.6-.8 0-1.8.5-2.4 1.2-.5.6-1 1.6-.8 2.5.9.1 1.8-.4 2.4-1.1Z"
+                      />
+                    </svg>
+                  </div>
+                  <div>
+                    <b>macOS · Intel / Apple Silicon</b>
+                    <span>磁盘镜像 .dmg · 需授予麦克风与辅助功能权限</span>
+                  </div>
+                </div>
+                <div class="plat">
+                  <div class="p-ico">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path
+                        d="M12 2c-1.3 0-2.4 1.3-2.4 3.2 0 1.5.2 2.3-.3 3.3-.6 1.1-2 2.2-2.7 3.7-.7 1.5-.4 2.7-.9 3.3-.4.5-1.2.5-1.6 1-.4.6 0 1.4.7 1.8.4.2.4.6.2 1-.3.7-1 1.2-.7 1.9.3.6 1.4.5 2.4.3.4-.1.8.1 1.1.5.7.9 2 1.6 3.9 1.6s3.2-.7 3.9-1.6c.3-.4.7-.6 1.1-.5 1 .2 2.1.3 2.4-.3.3-.7-.4-1.2-.7-1.9-.2-.4-.2-.8.2-1 .7-.4 1.1-1.2.7-1.8-.4-.5-1.2-.5-1.6-1-.5-.6-.2-1.8-.9-3.3-.7-1.5-2.1-2.6-2.7-3.7-.5-1-.3-1.8-.3-3.3C14.4 3.3 13.3 2 12 2Zm-1.3 4.3c.4 0 .7.4.7 1s-.3 1-.7 1-.8-.4-.8-1 .4-1 .8-1Zm2.7 0c.4 0 .8.4.8 1s-.4 1-.8 1-.7-.4-.7-1 .3-1 .7-1Zm-1.4 3c.7 0 1.4.3 1.8.7-.6.5-1.2.8-1.8.8s-1.3-.3-1.9-.8c.5-.4 1.2-.7 1.9-.7Z"
+                      />
+                    </svg>
+                  </div>
+                  <div>
+                    <b>Linux x86_64</b>
+                    <span>AppImage · Omarchy / Arch 另有 pacman 包与 Hyprland 集成</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA -->
+      <section class="cta">
+        <div class="wrap">
+          <h2 class="reveal">让每一次开口，<br />都有文字回应</h2>
+          <p class="sub reveal" data-delay="1">
+            免费、开源、跨平台。把芷若装进你的桌面，按住说话，松开即成文。
+          </p>
+          <div class="cta-actions reveal" data-delay="2">
+            <a
+              class="btn btn-primary"
+              href="https://github.com/DaweiTian/zhiruo/releases/latest"
+              target="_blank"
+              rel="noopener"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3v12" />
+                <path d="m7 11 5 5 5-5" />
+                <path d="M5 21h14" />
+              </svg>
+              下载芷若
+            </a>
+            <a
+              class="btn btn-ghost"
+              href="https://voicekey.buildwithais.com/"
+              target="_blank"
+              rel="noopener"
+            >
+              访问官网
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M14 4h6v6" />
+                <path d="m10 14 10-10" />
+                <path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4" />
+              </svg>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap foot-inner">
+        <div class="foot-brand">
+          <svg viewBox="0 0 1024 1024"><use href="#zhiruo-icon" /></svg>
+          芷若 Zhiruo
+        </div>
+        <div class="foot-links">
+          <a href="https://github.com/DaweiTian/zhiruo" target="_blank" rel="noopener">GitHub</a>
+          <a
+            href="https://github.com/DaweiTian/zhiruo/releases/latest"
+            target="_blank"
+            rel="noopener"
+            >下载</a
+          >
+          <a href="https://voicekey.buildwithais.com/" target="_blank" rel="noopener">官网</a>
+          <a href="https://github.com/DaweiTian/zhiruo/issues" target="_blank" rel="noopener"
+            >反馈</a
+          >
+        </div>
+        <div>MIT License · © Zhiruo contributors</div>
+      </div>
+      <div class="wrap foot-filing">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18" />
+            <path d="M12 3a15 15 0 0 1 0 18" />
+            <path d="M12 3a15 15 0 0 0 0 18" />
+          </svg>
+          宁ICP备2026000986号
+        </a>
+        <a
+          href="https://beian.mps.gov.cn/#/query/webSearch?code=64030002260026"
+          target="_blank"
+          rel="noopener"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Z" />
+            <path d="m9 12 2 2 4-4" />
+          </svg>
+          宁公网安备64030002260026号
+        </a>
+      </div>
+    </footer>
+
+    <script>
+      // 打字机：模拟 HUD 流式出字
+      ;(function () {
+        const el = document.getElementById('typed')
+        if (!el) return
+        const lines = [
+          '今天下午三点开产品评审会，记得带上最新版的原型图。',
+          '帮我把这段话润色一下，意思不要变，语气自然一点。',
+          '把这句话翻译成英文，就地替换掉选中的文字。',
+        ]
+        let li = 0
+        let ci = 0
+        let deleting = false
+        function tick() {
+          const line = lines[li]
+          if (!deleting) {
+            ci += 1
+            el.textContent = line.slice(0, ci)
+            if (ci >= line.length) {
+              deleting = true
+              setTimeout(tick, 2200)
+              return
+            }
+            setTimeout(tick, 72 + Math.random() * 68)
+          } else {
+            ci -= 2
+            if (ci <= 0) {
+              ci = 0
+              deleting = false
+              li = (li + 1) % lines.length
+              setTimeout(tick, 420)
+              return
+            }
+            el.textContent = line.slice(0, ci)
+            setTimeout(tick, 26)
+          }
+        }
+        tick()
+      })()
+
+      // 滚动浮现
+      ;(function () {
+        const items = document.querySelectorAll('.reveal')
+        if (!('IntersectionObserver' in window)) {
+          items.forEach(function (n) {
+            n.classList.add('in')
+          })
+          return
+        }
+        const io = new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (e) {
+              if (e.isIntersecting) {
+                e.target.classList.add('in')
+                io.unobserve(e.target)
+              }
+            })
+          },
+          { threshold: 0.12, rootMargin: '0px 0px -6% 0px' },
+        )
+        items.forEach(function (n) {
+          io.observe(n)
+        })
+      })()
+    </script>
+  </body>
 </html>

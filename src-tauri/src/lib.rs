@@ -282,6 +282,7 @@ pub fn run() {
             commands::close_picker_panel,
             commands::set_picker_width,
             commands::picker_insert,
+            commands::picker_insert_image,
             commands::get_snippet_candidates,
             commands::confirm_snippet_candidate,
             commands::clear_clipboard_history,

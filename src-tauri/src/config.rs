@@ -780,6 +780,13 @@ pub fn clipboard_file() -> PathBuf {
     config_dir().join("voice-key-clipboard.json")
 }
 
+/// 最近剪贴板的图片条目正文目录（PNG 正片 + 缩略图，`clipboard.rs` 独占）。
+pub fn clipboard_images_dir() -> PathBuf {
+    let dir = config_dir().join(CLIPBOARD_IMAGES_DIR_NAME);
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 /// Lifetime stats store, independent from history so history deletion or the
 /// 90-day retention prune never resets cumulative figures.
 pub fn stats_file() -> PathBuf {
@@ -808,6 +815,10 @@ const STRICT_DATA_FILES: [&str; 4] = [
 /// Live log directory, copied with grow-tolerance (the running app may append
 /// to the source while it is being copied).
 const LOG_DIR_NAME: &str = "logs";
+
+/// Clipboard image payloads (full PNG + thumbnails) referenced by
+/// `voice-key-clipboard.json`. Static once written, so copied strictly.
+const CLIPBOARD_IMAGES_DIR_NAME: &str = "clipboard-images";
 
 /// Switch the data root to `target`: copy + verify every data file, then flip
 /// the marker (the atomic mode gate). Any failure rolls back this round's
@@ -909,6 +920,20 @@ fn copy_data_files(
             created.push(dst);
         }
     }
+    let src_images = src_root.join(CLIPBOARD_IMAGES_DIR_NAME);
+    if src_images.is_dir() {
+        for entry in fs::read_dir(&src_images).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                continue;
+            }
+            let dst = dst_root
+                .join(CLIPBOARD_IMAGES_DIR_NAME)
+                .join(entry.file_name());
+            copy_and_verify(&entry.path(), &dst, true)?;
+            created.push(dst);
+        }
+    }
     Ok(())
 }
 
@@ -962,6 +987,7 @@ fn cleanup_portable_root(portable: &Path) {
         let _ = fs::remove_file(portable.join(name));
     }
     let _ = fs::remove_dir_all(portable.join(LOG_DIR_NAME));
+    let _ = fs::remove_dir_all(portable.join(CLIPBOARD_IMAGES_DIR_NAME));
     let _ = fs::remove_file(portable.join(PORTABLE_MARKER_NAME));
     let _ = fs::remove_dir(portable);
 }

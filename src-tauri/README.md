@@ -461,13 +461,19 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   收起 = 渲染层背景点击 / 右键、结果卡片关闭按钮、替换成功延时收起、Windows
   `mouse.rs` 点外收起（`is_open` 供其门禁）。
 - `src/clipboard.rs` - 最近剪贴板环形缓冲（快速插入面板的自建剪贴板历史，
-  `voice-key-clipboard.json`）：只存文本、单条 10 KB 上限、重复内容去重置顶、
-  上限默认 30 条（`picker.clipboardLimit` 可配 5–100）。采集 Windows 走
-  `AddClipboardFormatListener`（`WM_CLIPBOARDUPDATE`，专用线程 + message-only
-  窗口）、非 Windows 降级轮询 + 内容比对；**自写抑制**（`mark_self_write`，内容
-  哈希基线）让 `translate.rs` / `inject.rs` 的写剪贴板不进历史（自产自销）。隐私：
-  「启用剪贴板采集」总开关 + 设置页一键清空、面板单条删除（`remove_entry`，
-  文本即唯一键，采集按文本去重）；不进日志、不上传。
+  `voice-key-clipboard.json`）：文本 + 图片都存（文件不做）——文本单条 10 KB
+  上限；图片以 PNG 落 `clipboard-images/`（正片 + `<id>.thumb.png` 缩略图，
+  条目只存文件名 + 宽高），**图片优先于文本**采集（截图 / 复制图片时文本位
+  常是「图片」这类占位，以图为准才不丢图），像素 ≥8×8、≤32MP 闸；Windows
+  的 `arboard` 图片通道本身先试 CF_PNG 再退 CF_DIBV5（截图工具只放 PNG 的
+  场景由前一段救）；两者皆无再补一档 CF_DIB（老 GDI / 部分聊天工具只放这档）。重复内容去重置顶、上限默认 30 条（`picker.clipboardLimit`
+  可配 5–100）。采集 Windows 走 `AddClipboardFormatListener`
+  （`WM_CLIPBOARDUPDATE`，专用线程 + message-only 窗口）、非 Windows 降级
+  轮询 + 内容比对；**自写抑制**（`mark_self_write` / `mark_self_write_image`，
+  内容指纹基线 + 图片回声窗）让 `translate.rs` / `inject.rs` 的写剪贴板不进
+  历史（自产自销）。隐私：「启用剪贴板采集」总开关 + 设置页一键清空（连图片
+  文件一起清）、面板单条删除（`remove_entry` 按条目键寻址：文本 = 正文、
+  图片 = 文件名）；不进日志、不上传。save 后清孤儿图片文件。
 - `src/picker.rs` - 快速插入面板编排（鼠标侧键 X1/X2 唤出，label `picker`）：
   开关语义 toggle、贴指针弹出（`OverlayFrame` 工作区夹取，约 320×380）、`picker-update`
   事件下发常用词 + 最近剪贴板（挂载拉 `get_picker_data` 兜底首开竞态）；落点
@@ -507,7 +513,7 @@ Rust 主进程（Tauri v2）。app 入口 `main.rs` → `lib.rs::run()`：初始
   写不丢更新。锁内只做文件 I/O 与纯 JSON 合并、不嵌套其他锁（无锁序死锁风险）。
   **存储根（0.5.14）**：`config_dir()` 一处收口——`<exe_dir>\data\` 下存在
   `.portable` 标记文件时数据根 = 安装目录（便携模式），否则 = `%APPDATA%\voice-key`；
-  config / history / stats / clipboard / logs 全派生自它。根**一次进程内解析固定**
+  config / history / stats / clipboard / clipboard-images / logs 全派生自它。根**一次进程内解析固定**
   （`OnceLock` / `resolved_root`），切换只在下次启动生效（否则 `ConfigStore` 启动时
   缓存的路径会与 `history_file()` / `log_dir()` 失同步）。`switch_storage_root` 是
   写探测 → 复制 → 校验 → 标记门 → 失败回滚的完整迁移；`.portable` 是模式切换的

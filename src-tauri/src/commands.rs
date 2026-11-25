@@ -2345,6 +2345,26 @@ pub async fn picker_insert(app: AppHandle, text: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 从速插面板插入一条图片剪贴板历史：写回剪贴板 + 平台粘贴键（图片只能走
+/// 剪贴板粘贴，`inject.mode` 的逐字键入不适用）。键形状在 `clipboard.rs`
+/// 校验（防路径穿越）。失败契约同文本注入：图片尽力留在剪贴板可手动粘贴。
+/// 全程代际守卫（同 [`picker_insert`]）。
+#[tauri::command]
+pub async fn picker_insert_image(app: AppHandle, key: String) -> Result<(), String> {
+    let img = crate::clipboard::load_entry_image(&key)?;
+    let gen = crate::picker::current_generation();
+    crate::picker::restore_foreground_if(gen);
+    // 等焦点稳定（还焦点是异步生效），与 translate 流水线的写后延迟同理。
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    if let Err(e) = inject::paste_image(&img) {
+        // 失败不收起面板（可重试）；日志只记原因，不记内容。
+        log::warn!("picker: image inject failed: {e}");
+        return Err(e);
+    }
+    crate::picker::close_generation(&app, Some(gen));
+    Ok(())
+}
+
 /// 设置页拉取「从历史学到的常用词候选」（`picker.learnSnippets` 关着则空）。
 #[tauri::command]
 pub fn get_snippet_candidates(state: State<AppState>) -> Vec<String> {
@@ -2389,11 +2409,11 @@ pub fn clear_clipboard_history(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 删除单条剪贴板历史（按文本定位：采集按文本去重，文本即唯一键）。
-/// 面板开着时刷新列表。
+/// 删除单条剪贴板历史（按条目键定位：文本条目键即正文、图片条目键即文件名，
+/// 采集去重同一口径）。面板开着时刷新列表。
 #[tauri::command]
-pub fn delete_clipboard_entry(app: AppHandle, text: String) -> Result<(), String> {
-    crate::clipboard::remove_entry(&text)?;
+pub fn delete_clipboard_entry(app: AppHandle, key: String) -> Result<(), String> {
+    crate::clipboard::remove_entry(&key)?;
     if crate::picker::is_open() {
         crate::events::picker_update(&app, &crate::picker::current_payload(None));
     }
@@ -2411,6 +2431,11 @@ pub fn pin_clipboard_entry(
     state: State<AppState>,
     text: String,
 ) -> Result<Vec<String>, String> {
+    // 图片条目不能变文本常用词（其键形如 `<32 hex>.png`）；面板已不给图片
+    // 出「固定」按钮，这里兜 invoke 边界。
+    if crate::clipboard::is_valid_image_key(&text) {
+        return Err("图片条目不能固定为常用词。".to_string());
+    }
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("常用词不能为空。".to_string());
@@ -2429,7 +2454,7 @@ pub fn pin_clipboard_entry(
         list.push(entry);
         Ok(())
     })?;
-    // 剪贴板条目按原始文本存取（采集不 trim），删除也用原始文本匹配。
+    // 剪贴板条目按条目键存取（文本 = 原文不 trim，图片 = 文件名），删除同键匹配。
     if let Err(e) = crate::clipboard::remove_entry(&text) {
         log::warn!("pin_clipboard_entry: clipboard remove failed: {e}");
     }

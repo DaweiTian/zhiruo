@@ -14,9 +14,10 @@
 //!   （`both` = 默认剪贴板页签；`hub` 不开本面板，`mouse.rs` 路由到选区
 //!   快捷 hub）。
 //! * **注入**：点选条目走 `inject::inject_text_with_mode`（按 `inject.mode`
-//!   分派，设计 2.2 兼容回退）。插入前把前台窗口还给先前应用
-//!   （[`restore_foreground_if`]，代际守卫）——面板是可聚焦窗口（键盘导航
-//!   需要），不还焦点的话 Ctrl/V 会打进面板自己。
+//!   分派，设计 2.2 兼容回退）；图片条目走 `commands::picker_insert_image`
+//!   → `inject::paste_image`（图片只能剪贴板粘贴）。插入前把前台窗口还给
+//!   先前应用（[`restore_foreground_if`]，代际守卫）——面板是可聚焦窗口
+//!   （键盘导航需要），不还焦点的话 Ctrl/V 会打进面板自己。
 //! * **常用词**：手动管理在 `picker.userSnippets`（设置页编辑；0.11 面板
 //!   条目按钮可固定 / 删除——固定 = 从剪贴板历史**移动**进来，见
 //!   `commands::pin_clipboard_entry`）；从历史学的候选（[`ngram_candidates`]）
@@ -246,7 +247,29 @@ fn picker_payload(focus: PickerFocus, gen: u64) -> Value {
         .collect();
     let clipboard: Vec<Value> = crate::clipboard::get_entries()
         .into_iter()
-        .map(|entry| json!({ "text": entry.text, "timestamp": entry.timestamp }))
+        .map(|entry| {
+            if entry.is_image() {
+                let name = entry.image.clone().unwrap_or_default();
+                let mut item = json!({
+                    "text": entry.text,
+                    "timestamp": entry.timestamp,
+                    "kind": "image",
+                    "image": name,
+                    "width": entry.width,
+                    "height": entry.height,
+                });
+                if let Some(thumb) = crate::clipboard::image_thumb_data_url(&name) {
+                    item["thumb"] = json!(thumb);
+                }
+                item
+            } else {
+                json!({
+                    "text": entry.text,
+                    "timestamp": entry.timestamp,
+                    "kind": "text",
+                })
+            }
+        })
         .collect();
     json!({
         "focus": focus.as_str(),

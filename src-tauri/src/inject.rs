@@ -209,6 +209,19 @@ pub fn simulate_paste() -> Result<(), String> {
     chord(modifier_key(), Key::Unicode('v'))
 }
 
+/// 粘贴图片到当前焦点应用（写剪贴板 + 平台粘贴键）。图片只能走剪贴板粘贴
+/// ——`inject.mode` 的逐字键入对二进制内容无意义。失败契约同文本注入：写入
+/// 先于按键，粘贴键失败时图片仍留在剪贴板（[`simulate_paste`] 的调用方同理），
+/// 用户始终可以手动粘贴兜底。
+pub fn paste_image(img: &image::RgbaImage) -> Result<(), String> {
+    let hyprland = platform::is_hyprland_session();
+    crate::clipboard::write_clipboard_image(img)?;
+    thread::sleep(Duration::from_millis(if hyprland { 75 } else { 40 }));
+    simulate_paste()?;
+    thread::sleep(Duration::from_millis(if hyprland { 100 } else { 50 }));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

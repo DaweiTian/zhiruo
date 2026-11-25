@@ -83,9 +83,19 @@ export interface HubUpdatePayload {
 
 /** 最近剪贴板条目（自建环形缓冲，最新在前）。 */
 export interface PickerClipboardEntry {
+  /** 文本条目正文；图片条目为空串（内容在 `image` 指向的文件里）。 */
   text: string
   /** Unix 毫秒。 */
   timestamp: number
+  /** 条目类型：文本 / 图片（旧宿主缺省按 `text`）。 */
+  kind?: 'text' | 'image'
+  /** 图片条目键（`<指纹>.png`），删除 / 插入寻址用。 */
+  image?: string
+  /** 图片像素宽高。 */
+  width?: number
+  height?: number
+  /** 图片缩略图 data URL（面板预览；文件缺失时无）。 */
+  thumb?: string
 }
 
 /**
@@ -314,6 +324,8 @@ export const tauriApi = {
   getPickerData: () => invoke<PickerUpdatePayload>('get_picker_data'),
   closePickerPanel: () => invoke('close_picker_panel'),
   pickerInsert: (text: string) => invoke('picker_insert', { text }),
+  // 图片条目插入：写回剪贴板 + 平台粘贴键（键 = `PickerClipboardEntry.image`）。
+  pickerInsertImage: (key: string) => invoke('picker_insert_image', { key }),
   // 拖面板右缘把手调宽（逻辑 px）：拖动中传 `persist: false` 只调形，
   // 松手传 `true` 落盘 `picker.panelWidth`。返回实际生效（夹取后）的宽度。
   setPickerWidth: (width: number, persist: boolean) =>
@@ -325,7 +337,8 @@ export const tauriApi = {
     invoke<string[]>('confirm_snippet_candidate', { text }),
   clearClipboardHistory: () => invoke('clear_clipboard_history'),
   // Picker row actions (0.11)：删除剪贴板单条 / 固定（移动）进常用词 / 移除常用词。
-  deleteClipboardEntry: (text: string) => invoke('delete_clipboard_entry', { text }),
+  // `deleteClipboardEntry` 的入参是条目键（文本条目 = 正文，图片条目 = 文件名）。
+  deleteClipboardEntry: (key: string) => invoke('delete_clipboard_entry', { key }),
   pinClipboardEntry: (text: string) => invoke<string[]>('pin_clipboard_entry', { text }),
   removeUserSnippet: (text: string) => invoke<string[]>('remove_user_snippet', { text }),
   // 文本注入兼容回退（设计 2.2）：注入只落剪贴板 / 失败时的 HUD 软提示。

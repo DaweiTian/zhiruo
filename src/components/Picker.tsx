@@ -14,7 +14,9 @@
  *   决定初始页签（目标页签为空且另一页签有货时退过去）；`both` = 默认
  *   剪贴板页签；
  * - 点选条目 → `picker_insert`（Rust 先还焦点给先前应用再走 `inject_text`），
- *   插入后面板收起。
+ *   图片条目走 `picker_insert_image`（写回剪贴板 + 粘贴），插入后面板收起；
+ *   图片条目以缩略图呈现（`thumb` data URL），且不出「固定」按钮（图片变
+ *   不了文本常用词）。
  *
  * 动效（`index.css` `picker-*` + 打开弹入用 WAAPI）：打开时卡片做**仅 transform**
  * 的轻微弹入（不透明度恒 1——窗口 show 先于 picker-update 到达，可见后再从
@@ -51,6 +53,12 @@ interface FlatItem {
   key: string
   kind: 'snippet' | 'clipboard'
   text: string
+  /** 条目寻址键：文本条目 = 正文，图片条目 = 文件名。删除 / 图片插入用。 */
+  entryKey: string
+  /** 图片条目：缩略图 data URL（缺文件时无，显示占位）。 */
+  thumb?: string
+  /** 图片条目标记（插入走 `pickerInsertImage`，隐藏「固定」）。 */
+  isImage?: boolean
   /** 剪贴板条目的相对时间标签（常用词为 undefined）。 */
   timeLabel?: string
 }
@@ -177,19 +185,27 @@ export function Picker() {
         key: `snippet:${text}`,
         kind: 'snippet' as const,
         text,
+        entryKey: text,
       })),
     [sortedSnippets],
   )
 
   const clipboardItems = useMemo<FlatItem[]>(
     () =>
-      clipboard.map((entry, index) => ({
-        // 序号兜底唯一性：时间戳 + 前缀可能撞车（同毫秒、同前 24 字符）。
-        key: `clipboard:${index}:${entry.timestamp}`,
-        kind: 'clipboard' as const,
-        text: entry.text,
-        timeLabel: timeLabel(t, entry.timestamp, now),
-      })),
+      clipboard.map((entry, index) => {
+        const isImage = entry.kind === 'image' || Boolean(entry.image)
+        return {
+          // 序号兜底唯一性：时间戳 + 前缀可能撞车（同毫秒、同前 24 字符）。
+          key: `clipboard:${index}:${entry.timestamp}`,
+          kind: 'clipboard' as const,
+          // 图片条目正文为空串：显示标签替身（缩略图才是主体）。
+          text: isImage ? t('picker.imageEntry') : entry.text,
+          entryKey: isImage ? (entry.image ?? '') : entry.text,
+          thumb: entry.thumb,
+          isImage,
+          timeLabel: timeLabel(t, entry.timestamp, now),
+        }
+      }),
     [clipboard, now, t],
   )
 
@@ -223,10 +239,13 @@ export function Picker() {
     (item: FlatItem | undefined) => {
       if (!item) return
       // Rust 侧注入成功才收起面板并计使用次数；失败保持打开可重试
-      // （文本已留剪贴板）。使用计数只服务「常用词按最近使用排序」，
+      // （内容已留剪贴板）。使用计数只服务「常用词按最近使用排序」，
       // 剪贴板条目文本可能很长（单条上限 10KB），不做键。
-      void window.electronAPI
-        .pickerInsert(item.text)
+      const call =
+        item.kind === 'clipboard' && item.isImage
+          ? window.electronAPI.pickerInsertImage(item.entryKey)
+          : window.electronAPI.pickerInsert(item.text)
+      void call
         .then(() => {
           if (item.kind === 'snippet') bumpUsage(item.text)
         })
@@ -287,13 +306,14 @@ export function Picker() {
     [snippets, t],
   )
 
-  // 条目删除：剪贴板条目删历史，常用词条目即取消固定（不回填剪贴板）。
+  // 条目删除：剪贴板条目删历史（按条目键寻址），常用词条目即取消固定
+  // （不回填剪贴板）。
   const remove = useCallback(
     (item: FlatItem | undefined) => {
       if (!item) return
       const call =
         item.kind === 'clipboard'
-          ? window.electronAPI.deleteClipboardEntry(item.text)
+          ? window.electronAPI.deleteClipboardEntry(item.entryKey)
           : window.electronAPI.removeUserSnippet(item.text)
       void call.catch(() => toast.error(t('picker.actionFailed')))
     },
@@ -532,18 +552,38 @@ function ItemRow({
       <button
         type="button"
         tabIndex={-1}
-        className="flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left"
         onClick={() => onInsert(item)}
       >
-        <span className="w-full min-w-0 truncate whitespace-pre-wrap break-words">{item.text}</span>
-        {/* 时间标签在条目底部自成一行——挂右侧太挤正文宽度（0.15.x）。 */}
-        {showTime && item.timeLabel && (
-          <span className="text-[9px] leading-none text-muted-foreground">{item.timeLabel}</span>
+        {item.isImage && (
+          <span className="flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded bg-muted ring-1 ring-border/60">
+            {item.thumb ? (
+              <img
+                src={item.thumb}
+                alt=""
+                className="h-full w-full object-cover"
+                draggable={false}
+              />
+            ) : (
+              <span className="text-[9px] leading-none text-muted-foreground">
+                {t('picker.imageEntry')}
+              </span>
+            )}
+          </span>
         )}
+        <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+          <span className="w-full min-w-0 truncate whitespace-pre-wrap break-words">
+            {item.text}
+          </span>
+          {/* 时间标签在条目底部自成一行——挂右侧太挤正文宽度（0.15.x）。 */}
+          {showTime && item.timeLabel && (
+            <span className="text-[9px] leading-none text-muted-foreground">{item.timeLabel}</span>
+          )}
+        </span>
       </button>
       {/* 动作按钮纵向排列（0.12 用户拍板）：两枚小图标上下叠，少挤正文宽度。
           hover / 选中时淡入——常显太抢正文。剪贴板条目 = 固定（上）+ 删除（下）；
-          常用词条目 = 取消固定。 */}
+          常用词条目 = 取消固定。图片条目不能变文本常用词，只留删除。 */}
       <div
         className={cn(
           'flex shrink-0 flex-col gap-0.5 opacity-0 transition-opacity duration-150',
@@ -551,7 +591,7 @@ function ItemRow({
           selected && 'opacity-100',
         )}
       >
-        {onPin && (
+        {onPin && !item.isImage && (
           <button
             type="button"
             tabIndex={-1}

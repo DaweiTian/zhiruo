@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.18.0](https://github.com/DaweiTian/zhiruo/compare/v0.17.1...v0.18.0) (2026-11-25)
+
+剪贴板历史支持图片：复制图片与截图入库、面板缩略图预览、点选粘贴回目标应用。
+
+### Features
+
+- **clipboard:** 最近剪贴板存下图片与截图——采集先读图片、读不到再落文本，
+  读取覆盖 CF_PNG / CF_DIBV5 / CF_DIB 三档（Win+Shift+S / Snipaste 这类截图
+  工具常只放 PNG，老 GDI 与部分聊天工具只放 CF_DIB）；PNG 正片 + 缩略图落
+  本地 `clipboard-images/`，条目只存文件名与宽高，像素 ≥8×8、≤32MP 才采集，
+  重复内容去重置顶
+- **picker:** 图片条目以缩略图呈现（缺文件显「图片」占位），点选 / Enter 写回
+  剪贴板并粘贴到当前光标（图片只能剪贴板粘贴，逐字键入不适用）；图片条目
+  不提供「固定」（图片变不了文本常用词），删除照旧
+
+### Notes
+
+- 复制图片时文本位常只剩「图片」这类占位——现在**图片优先于文本**采集，
+  占位文字不会再顶掉图
+- 自写抑制扩展到图片：面板粘贴出去的图不会被自家采集再记进历史（内容指纹 +
+  回声窗双保险）
+- 图片文件随条目生命周期清理：删除 / 裁剪 / 设置页一键清空（隐私开关）连
+  图片文件一起清；存储根迁移（便携 ↔ 默认）同步携带 `clipboard-images/`
+- 旧配置 / 旧历史零迁移：旧 JSON 无 `kind` 字段按文本条目读
+- 已知限制：选区翻译的剪贴板快照仍只保文本（既有取舍），复制截图后做选区
+  替换会顶掉**当前剪贴板**里的图，但图已进历史、面板可找回
+
 ## [0.17.1](https://github.com/DaweiTian/zhiruo/compare/v0.17.0...v0.17.1) (2026-11-24)
 
 0.17.0 的打开闪帧修复版。
